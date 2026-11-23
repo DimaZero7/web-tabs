@@ -35,6 +35,7 @@
         <label>Повторы, левая <input id="rep-left" type="number" min="0" max="99"></label>
         <label>правая <input id="rep-right" type="number" min="0" max="99"></label>
       </div>
+      <button id="piano" class="btn big wide">▶ На пианино</button>
       <ul id="errors"></ul>
       <div class="row">
         <button id="dup" class="btn ghost">Дублировать</button>
@@ -59,6 +60,32 @@
           «Использовать эту папку».</p>
         <button id="setup-btn" class="btn big">Подключить папку на Диске</button>
       </div>
+    </section>
+
+    <section id="player" hidden>
+      <div class="pl-bar">
+        <div class="pl-info">
+          <span id="pl-title" class="pl-title"></span>
+          <span id="pl-step" class="pl-step"></span>
+        </div>
+        <div class="pl-transport">
+          <button id="pl-start" class="ico" title="В начало"></button>
+          <button id="pl-prev" class="ico" title="Шаг назад (←)"></button>
+          <button id="pl-play" class="ico play" title="Пуск / пауза (пробел)"></button>
+          <button id="pl-next" class="ico" title="Шаг вперёд (→)"></button>
+        </div>
+        <div class="pl-tools">
+          <div id="pl-speed" class="seg" title="Скорость">
+            <button data-speed="0.5">0.5×</button><button data-speed="1">1×</button>
+            <button data-speed="1.5">1.5×</button><button data-speed="2">2×</button>
+          </div>
+          <button id="pl-loop" class="ico toggle" title="По кругу"></button>
+          <button id="pl-sound" class="ico toggle" title="Звук"></button>
+          <button id="pl-close" class="ico" title="Закрыть (Esc)"></button>
+        </div>
+      </div>
+      <div id="pl-progress" class="pl-progress"></div>
+      <canvas id="pl-canvas"></canvas>
     </section>
 
     <div id="zoom" class="zoom">

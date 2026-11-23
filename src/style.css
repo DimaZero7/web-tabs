@@ -73,3 +73,65 @@ main { position: relative; height: calc(100% - 48px); }
 .setup-card .hint { font-size: 13px; }
 .btn.big { font-size: 17px; padding: 12px 22px; margin-top: 8px; }
 .btn, .zoom button { white-space: nowrap; }
+
+.btn.wide { display: block; width: 100%; margin: 4px 0 12px; }
+/* ---------- режим «на пианино» ---------- */
+/* на весь экран, поверх верхней панели приложения */
+#player { position: fixed; inset: 0; background: #08080a; display: flex; flex-direction: column; z-index: 50; }
+#player[hidden] { display: none; }
+/* три колонки: слева название, по центру транспорт (пуск всегда посередине), справа инструменты и крестик */
+.pl-bar { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 12px;
+  padding: 10px 16px; background: #0f0f12; border-bottom: 1px solid rgba(255,255,255,0.06); }
+.pl-info { display: flex; flex-direction: column; min-width: 0; }
+.pl-title { font-weight: 600; font-size: 15px; letter-spacing: .1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pl-step { color: var(--muted); font-size: 12px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pl-transport { display: flex; align-items: center; gap: 6px; }
+.pl-tools { display: flex; align-items: center; gap: 6px; justify-content: flex-end; min-width: 0; }
+.ico { width: 38px; height: 38px; flex: none; display: grid; place-items: center; border-radius: 10px; border: 0; padding: 0;
+  background: transparent; color: #c9c9cf; cursor: pointer; transition: background .15s, color .15s; }
+.ico.play { width: 48px; height: 48px; border-radius: 50%; background: #f2f2f4; color: #0b0b0d; margin: 0 6px; }
+/* выключено — приглушённо, включено — цвет акцента с заливкой */
+.ico.toggle { color: #55555d; }
+.ico.toggle.on { color: #7db9ff; background: rgba(26,139,255,0.18); }
+.seg { display: flex; flex: none; background: rgba(255,255,255,0.05); border-radius: 10px; padding: 3px; margin-right: 4px; }
+.seg button { border: 0; background: transparent; color: #8b8b93; font: 600 12px "Segoe UI", Roboto, sans-serif;
+  padding: 6px 9px; border-radius: 7px; cursor: pointer; }
+.seg button.on { background: rgba(255,255,255,0.12); color: #fff; }
+.pl-progress { display: flex; gap: 3px; padding: 10px 16px 0; background: #08080a; }
+.pl-progress button { flex: 1; min-width: 0; height: 6px; border: 0; padding: 0; border-radius: 3px; cursor: pointer;
+  background: rgba(255,255,255,0.10); transition: background .15s; }
+.pl-progress button.done { background: rgba(255,255,255,0.32); }
+.pl-progress button.now { background: #f2f2f4; }
+/* наведение — только там, где есть мышь (на сенсоре фон не «залипает») */
+@media (hover: hover) {
+  .ico:hover { background: rgba(255,255,255,0.07); color: #fff; }
+  .ico.play:hover { background: #fff; color: #000; }
+  .ico.toggle.on:hover { background: rgba(26,139,255,0.26); color: #a5cfff; }
+  .seg button:hover { color: #fff; }
+  .pl-progress button:not(.now):hover { background: rgba(255,255,255,0.25); }
+}
+/* рамка фокуса — только с клавиатуры */
+#player button:focus { outline: none; }
+#player button:focus-visible { outline: 2px solid #7db9ff; outline-offset: 2px; }
+#pl-canvas { flex: 1; width: 100%; min-height: 0; display: block; cursor: pointer; }
+/* узко: всё остаётся в одной строке, просто компактнее */
+@media (max-width: 980px) {
+  .pl-bar { gap: 8px; padding: 8px 10px; }
+  .pl-transport, .pl-tools { gap: 2px; }
+  .ico { width: 34px; height: 34px; }
+  .ico.play { width: 42px; height: 42px; margin: 0 4px; }
+  .seg { padding: 2px; margin-right: 2px; }
+  .seg button { padding: 6px 6px; font-size: 11px; }
+  .pl-title { font-size: 14px; }
+  .pl-progress { padding: 8px 10px 0; }
+}
+@media (max-width: 780px) {
+  #pl-start { display: none; }
+  .pl-step { display: none; }
+  .seg button { padding: 6px 4px; }
+}
+/* телефон: названию места нет — транспорт слева, инструменты справа */
+@media (max-width: 560px) {
+  .pl-bar { grid-template-columns: auto minmax(0, 1fr); }
+  .pl-info { display: none; }
+}

@@ -2,6 +2,7 @@
 import { songMetrics, layoutBlock } from './layout.js';
 import { drawGrid, drawItems, makeMeasure } from './draw.js';
 import { storage, emptySong } from './storage.js';
+import { openPlayer } from './player.js';
 
 const CELL_100 = 5 * 96 / 25.4;        // клетка 5 мм в CSS-пикселях = масштаб 100%
 const Z_MIN = CELL_100 * 0.25, Z_MAX = CELL_100 * 10;
@@ -365,6 +366,10 @@ for (const id of ['left', 'right', 'rep-left', 'rep-right']) {
 
 // ---------- кнопки ----------
 $('add').onclick = addBlock;
+// Режим «на пианино»: кнопка в панели блока или двойной клик / двойное касание по блоку
+const showPiano = id => { const b = block(id); if (b) openPlayer({ song: state.song, block: b, measure }); };
+$('piano').onclick = () => showPiano(state.selected);
+canvas.addEventListener('dblclick', e => { const p = pos(e); const box = hit(p.x, p.y); if (box) showPiano(box.id); });
 $('dup').onclick = duplicate;
 $('del').onclick = removeSelected;
 $('undo').onclick = () => undo(false);
