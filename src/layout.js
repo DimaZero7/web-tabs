@@ -26,7 +26,7 @@ export function songMetrics(song, measure) {
     for (const key of ['left', 'right']) {
       const { cols } = parseRow(b[key]);
       maxCols = Math.max(maxCols, cols.length);
-      for (const c of cols) if (c) for (const n of c.notes) widest = Math.max(widest, noteWidth(n, measure));
+      for (const c of cols) if (c) for (const n of c.notes) if (n) widest = Math.max(widest, noteWidth(n, measure));
     }
   }
   const colW = Math.max(4, 2 * Math.ceil((widest + 0.4) / 2));
@@ -56,6 +56,7 @@ export function layoutBlock(block, metrics, measure) {
       const cx = colX(i) + colW / 2, edge = colX(i) + colW;
       let right = 0;
       c.notes.forEach((n, k) => {
+        if (!n) return;                                // пустое место в стопке
         const w = noteWidth(n, measure);
         items.push({ type: 'note', note: n, x: cx - w / 2, cy: top + 1 + k + 0.5 });
         right = Math.max(right, cx + w / 2);
@@ -71,7 +72,9 @@ export function layoutBlock(block, metrics, measure) {
         const t = top + 1.12, b = top + 1 + c.notes.length - 0.12, hook = 0.2;
         line(edge - hook, t, edge, t); line(edge, t, edge, b); line(edge - hook, b, edge, b);
       }
-      if (cols[i + 1]) items.push({ type: 'arrow', x: edge, y: top + 1.5 });   // стрелка в одну клетку
+      // стрелка в одну клетку — на строке, где стоит нота следующего столбца
+      const next = cols[i + 1];
+      if (next) items.push({ type: 'arrow', x: edge, y: top + 1 + Math.max(0, next.notes.findIndex(Boolean)) + 0.5 });
     });
   };
   row(L.cols, 0, HT);

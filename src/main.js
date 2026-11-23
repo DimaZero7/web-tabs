@@ -1,6 +1,7 @@
 // web-tabs — доска с сеткой точек (как в MyScript Notes) и блоками нот.
 import { songMetrics, layoutBlock } from './layout.js';
 import { drawGrid, drawItems, makeMeasure } from './draw.js';
+import { storage, emptySong } from './storage.js';
 
 const CELL_100 = 5 * 96 / 25.4;        // клетка 5 мм в CSS-пикселях = масштаб 100%
 const Z_MIN = CELL_100 * 0.25, Z_MAX = CELL_100 * 10;
@@ -16,28 +17,31 @@ const state = {
 };
 
 // ---------- данные ----------
-async function api(path, opts) {
-  const r = await fetch(path, opts);
-  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.statusText);
-  return r.json();
-}
+const OPEN = '__open__', CREATE = '__create__', COPY = '__copy__', FORGET = '__forget__';
 
-async function loadSongList() {
-  const list = await api('/api/songs');
+async function loadSongList(selectId) {
+  const list = await storage.list();
   const sel = $('song');
-  sel.innerHTML = list.map(s => `<option value="${s.id}">${escapeHtml(s.title)}</option>`).join('');
-  const want = new URLSearchParams(location.search).get('song') || localStorage.getItem('wt-song');
-  state.songId = list.some(s => s.id === want) ? want : list[0]?.id;
-  sel.value = state.songId;
+  const extra = storage.open
+    ? `<option value="${OPEN}">＋ Открыть файл (Google Диск)…</option><option value="${CREATE}">＋ Новая песня…</option>` +
+      `<option value="${COPY}">＋ Сохранить копию на Диск…</option>` +
+      (list.length ? `<option value="${FORGET}">− Убрать песню из списка (файл останется)</option>` : '') : '';
+  sel.innerHTML = list.map(s => `<option value="${escapeHtml(s.id)}">${escapeHtml(s.title)}</option>`).join('') + extra;
+  const want = selectId || new URLSearchParams(location.search).get('song') || localStorage.getItem('wt-song');
+  state.songId = list.some(s => s.id === want) ? want : list[0]?.id || null;
+  sel.value = state.songId ?? '';
+  return list;
 }
 
 async function loadSong(keepView) {
-  const song = await api(`/api/songs/${state.songId}`);
-  state.mtime = (await api(`/api/songs/${state.songId}/mtime`)).mtime;
+  const song = await storage.read(state.songId);
+  state.mtime = await storage.mtime(state.songId).catch(() => 0);
+  song.blocks ||= [];
   state.song = song;
   for (const [i, b] of song.blocks.entries()) b.id ||= 'b' + (i + 1);
-  $('title').textContent = song.title || state.songId;
-  document.title = (song.title || state.songId) + ' — web-tabs';
+  $('title').textContent = song.title || '';
+  setStatus('');
+  document.title = (song.title || 'песня') + ' — web-tabs';
   $('video').hidden = !song.video;
   if (song.video) $('video').href = song.video;
   if (!keepView) fitWidth();
@@ -51,34 +55,35 @@ function scheduleSave() {
   setStatus('изменено…');
   clearTimeout(saveTimer);
   state.dirtySince ||= Date.now();
-  saveTimer = setTimeout(save, 500);
+  saveTimer = setTimeout(save, 600);
 }
 async function save() {
+  if (!state.songId) return;
   state.saving = true;
   try {
-    const { mtime } = await api(`/api/songs/${state.songId}`, {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(state.song),
-    });
-    state.mtime = mtime; state.dirtySince = 0;
+    state.mtime = await storage.write(state.songId, state.song);
+    state.dirtySince = 0;
     setStatus('сохранено');
   } catch (e) {
     setStatus('не сохранилось: ' + e.message);
   } finally { state.saving = false; }
 }
 
-// Правки файла снаружи (руками или Claude) — подхватываем
-setInterval(async () => {
+// Правки файла снаружи (руками, Claude или с другого устройства через Диск) — подхватываем
+async function checkExternal() {
   if (!state.songId || state.saving || state.dirtySince || document.hidden) return;
   try {
-    const { mtime } = await api(`/api/songs/${state.songId}/mtime`);
+    const mtime = await storage.mtime(state.songId);
     if (mtime > state.mtime + 1) {
       await loadSong(true);
       // отмена не должна затирать правку, сделанную в файле
       state.history = []; state.future = []; updateUndo();
       setStatus('обновлено из файла');
     }
-  } catch { /* сервер перезапускается — попробуем позже */ }
-}, 1500);
+  } catch { /* сервер перезапускается или нет сети — попробуем позже */ }
+}
+setInterval(checkExternal, storage.kind === 'android' ? 8000 : 1500);
+document.addEventListener('visibilitychange', checkExternal);
 
 // ---------- отмена ----------
 function commit() {                                   // запомнить состояние ДО изменения
@@ -158,25 +163,51 @@ const hit = (sx, sy) => {
 const pos = e => { const r = canvas.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
 
 let drag = null;
+const touches = new Map();                            // активные пальцы: id → { x, y }
+let pinch = null;                                     // два пальца: масштаб и сдвиг доски
+
 canvas.addEventListener('pointerdown', e => {
-  const { x: ex, y: ey } = pos(e);
+  const p = pos(e);
   canvas.setPointerCapture(e.pointerId);
-  const box = hit(ex, ey);
+  touches.set(e.pointerId, p);
+  if (touches.size === 2) {                           // второй палец — переходим к щипку
+    if (drag?.kind === 'block' && drag.moved) undo();  // начатый перенос блока отменяем
+    drag = null;
+    const [a, b] = [...touches.values()];
+    pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2 };
+    return;
+  }
+  if (touches.size > 2) return;
+  const box = hit(p.x, p.y);
   if (box) {
-    const b = block(box.id);
-    if (state.selected !== b.id) { state.selected = b.id; syncPanel(); }
-    drag = { kind: 'block', b, sx: ex, sy: ey, bx: b.x, by: b.y, moved: false };
+    const bl = block(box.id);
+    if (state.selected !== bl.id) { state.selected = bl.id; syncPanel(); }
+    drag = { kind: 'block', b: bl, sx: p.x, sy: p.y, bx: bl.x, by: bl.y, moved: false };
   } else {
-    drag = { kind: 'pan', sx: ex, sy: ey, cx: state.cam.x, cy: state.cam.y, moved: false };
+    drag = { kind: 'pan', sx: p.x, sy: p.y, cx: state.cam.x, cy: state.cam.y, moved: false };
   }
   canvas.classList.add('drag');
   render();
 });
 canvas.addEventListener('pointermove', e => {
-  const { x: ex, y: ey } = pos(e);
-  if (!drag) { canvas.classList.toggle('over-block', !!hit(ex, ey)); return; }
-  const dx = (ex - drag.sx) / state.cam.z, dy = (ey - drag.sy) / state.cam.z;
-  if (Math.abs(ex - drag.sx) + Math.abs(ey - drag.sy) > 3) {
+  const p = pos(e);
+  if (touches.has(e.pointerId)) touches.set(e.pointerId, p);
+  if (pinch && touches.size >= 2) {
+    const [a, b] = [...touches.values()];
+    const d = Math.hypot(a.x - b.x, a.y - b.y), mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+    if (!state.locked) {
+      state.cam.x -= (mx - pinch.mx) / state.cam.z;   // сдвиг двумя пальцами
+      state.cam.y -= (my - pinch.my) / state.cam.z;
+      if (pinch.d > 0) zoomAt(d / pinch.d, mx, my);   // щипок — масштаб вокруг середины пальцев
+    }
+    Object.assign(pinch, { d, mx, my });
+    render();
+    return;
+  }
+  if (!drag) { canvas.classList.toggle('over-block', !!hit(p.x, p.y)); return; }
+  const dx = (p.x - drag.sx) / state.cam.z, dy = (p.y - drag.sy) / state.cam.z;
+  const slop = e.pointerType === 'touch' ? 8 : 3;     // палец дрожит сильнее мыши
+  if (Math.abs(p.x - drag.sx) + Math.abs(p.y - drag.sy) > slop) {
     if (!drag.moved && drag.kind === 'block') commit();
     drag.moved = true;
   }
@@ -188,12 +219,16 @@ canvas.addEventListener('pointermove', e => {
   }
   render();
 });
-canvas.addEventListener('pointerup', () => {
+const pointerEnd = e => {
+  touches.delete(e.pointerId);
+  if (pinch) { if (touches.size < 2) pinch = null; drag = null; canvas.classList.remove('drag'); return; }
   if (drag?.kind === 'block' && drag.moved) scheduleSave();
   if (drag?.kind === 'pan' && !drag.moved && state.selected) { state.selected = null; syncPanel(); render(); }
   drag = null;
   canvas.classList.remove('drag');
-});
+};
+canvas.addEventListener('pointerup', pointerEnd);
+canvas.addEventListener('pointercancel', pointerEnd);
 canvas.addEventListener('wheel', e => {
   e.preventDefault();
   if (state.locked) return;
@@ -233,6 +268,7 @@ function bottomOfAll() {
   return Math.max(-1, ...state.song.blocks.map(b => b.y + layoutBlock(b, m, measure).h));
 }
 function addBlock() {
+  if (!state.song) return;
   commit();
   const x = state.song.blocks[0]?.x ?? 1;
   const b = { id: newId(), x, y: bottomOfAll() + 2, left: '', right: '', reps: [1, 1] };
@@ -302,9 +338,35 @@ $('lock').onclick = () => {
   $('lock').title = state.locked ? 'Вид закреплён — открыть' : 'Закрепить вид';
 };
 $('song').onchange = async e => {
-  state.songId = e.target.value; localStorage.setItem('wt-song', state.songId);
-  state.selected = null; state.history = []; state.future = []; updateUndo();
-  await loadSong(false);
+  const v = e.target.value;
+  try {
+    if (v === FORGET) {
+      if (state.songId && confirm('Убрать эту песню из списка? Сам файл не удаляется.')) {
+        await storage.forget(state.songId);
+        state.song = null; state.selected = null;
+        await loadSongList();
+        if (state.songId) await loadSong(false); else { syncPanel(); render(); setStatus('список пуст: откройте файл с Диска'); }
+      } else $('song').value = state.songId ?? '';
+      return;
+    }
+    if (v === OPEN || v === CREATE || v === COPY) {
+      const suggested = v === COPY ? (state.song?.title || 'Песня') : 'Новая песня';
+      const title = v === OPEN ? null : prompt('Название песни', suggested);
+      if ((v !== OPEN && !title) || (v === COPY && !state.song)) { $('song').value = state.songId ?? ''; return; }
+      const f = v === OPEN ? await storage.open() : await storage.create(title);
+      if (v === CREATE) await storage.write(f.id, emptySong(title));
+      if (v === COPY) await storage.write(f.id, { ...state.song, title });
+      await loadSongList(f.id);
+    } else {
+      state.songId = v;
+    }
+    localStorage.setItem('wt-song', state.songId);
+    state.selected = null; state.history = []; state.future = []; updateUndo();
+    await loadSong(false);
+  } catch (err) {
+    $('song').value = state.songId ?? '';
+    if (!/отмен/i.test(err.message)) setStatus('ошибка: ' + err.message);
+  }
 };
 // PNG блока для вставки в MyScript: клетка = U пикселей, прозрачный фон, поля по полклетки
 $('png').onclick = () => {
@@ -327,13 +389,17 @@ function clamp(v, a, b) { return Math.min(b, Math.max(a, v)); }
 function escapeHtml(s) { return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 window.addEventListener('beforeunload', e => { if (state.dirtySince) { save(); e.preventDefault(); } });
 
+if (storage.kind === 'android') $('png').hidden = true;   // скачивание файлов в WebView не работает
 window.webTabs = state;                               // для отладки из консоли браузера
 
 // ---------- старт ----------
 (async () => {
   try {
     await loadSongList();
-    if (!state.songId) { setStatus('нет песен в папке songs/'); render(); return; }
+    if (!state.songId) {
+      setStatus(storage.open ? 'выберите в списке: открыть файл с Диска или новая песня' : 'нет песен в папке songs/');
+      render(); return;
+    }
     await document.fonts?.ready;
     await loadSong(false);
     updateUndo();

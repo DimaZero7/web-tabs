@@ -9,8 +9,8 @@ const measure = (text, size) => text.length * 0.5 * size;
 const song = JSON.parse(readFileSync(new URL('../songs/call-out-my-name.json', import.meta.url), 'utf8'));
 
 test('нота: русское название, октава, удержание', () => {
-  assert.deepEqual(parseNote('Ab0'), { en: 'Ab', ru: 'Ляb', oct: '0', hold: null });
-  assert.deepEqual(parseNote('C#3'), { en: 'C#', ru: 'До#', oct: '3', hold: null });
+  assert.deepEqual(parseNote('Ab0'), { en: 'Ab', ru: 'Ляb', oct: '0', hold: null, pitch: 8 });
+  assert.deepEqual(parseNote('C#3'), { en: 'C#', ru: 'До#', oct: '3', hold: null, pitch: 37 });
   assert.equal(parseNote('Eb2~').hold, 'end');
   assert.equal(parseNote('Bb1~9').hold, 9);
   assert.equal(parseNote('H2'), null);
