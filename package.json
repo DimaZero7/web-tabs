@@ -1,0 +1,14 @@
+{
+  "name": "web-tabs",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Доска с сеткой точек (как в MyScript Notes) для записи фортепианных блоков: левая и правая рука, аккорды, удержания, повторы",
+  "type": "module",
+  "scripts": {
+    "start": "node serve.mjs",
+    "test": "node --test test/"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

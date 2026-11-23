@@ -1,0 +1,30 @@
+{
+  "title": "The Weeknd — Call Out My Name",
+  "video": "https://www.youtube.com/watch?v=pRVGKr49NaQ",
+  "blocks": [
+    {
+      "id": "b1",
+      "x": 1,
+      "y": 1,
+      "left": "[Ab0 Ab1] > Gb1 > Eb1 > Ab1 > Gb1 > Eb1",
+      "right": "{Bb1 B1~ Eb2}",
+      "reps": [2, 1]
+    },
+    {
+      "id": "b2",
+      "x": 1,
+      "y": 12,
+      "left": "[Eb0 Eb1] > Db1 > Bb0 > Eb1 > Db1 > Bb0 > [Eb0 Eb1] > Db1 > Bb0",
+      "right": "{Gb1 Bb1~9 Db2}",
+      "reps": [1, 1]
+    },
+    {
+      "id": "b3",
+      "x": 1,
+      "y": 23,
+      "left": "Eb1 > Gb1 > Ab1 > [Ab0 Ab1] > Gb1 > Eb1 > Ab1 > Gb1 > Eb1",
+      "right": "Bb2 > Db3 > Eb3 > {Bb2 Eb2~} > Ab2~",
+      "reps": [1, 1]
+    }
+  ]
+}

@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>web-tabs</title>
+<link rel="stylesheet" href="src/style.css">
+</head>
+<body>
+  <header class="bar">
+    <select id="song" title="Песня"></select>
+    <span id="title" class="title"></span>
+    <a id="video" class="btn ghost" target="_blank" rel="noopener" hidden>Видео ↗</a>
+    <span class="grow"></span>
+    <span id="status" class="status"></span>
+    <button id="undo" class="btn ghost" title="Отменить (Ctrl+Z)">↶</button>
+    <button id="redo" class="btn ghost" title="Повторить (Ctrl+Shift+Z)">↷</button>
+    <button id="add" class="btn">+ Блок</button>
+    <button id="png" class="btn ghost" title="Сохранить выделенный блок картинкой (для MyScript)">PNG</button>
+  </header>
+
+  <main>
+    <canvas id="board"></canvas>
+
+    <aside id="panel" hidden>
+      <h2 id="panel-title">Блок</h2>
+      <label>Левая рука
+        <textarea id="left" rows="3" spellcheck="false"></textarea>
+      </label>
+      <label>Правая рука
+        <textarea id="right" rows="3" spellcheck="false"></textarea>
+      </label>
+      <div class="reps">
+        <label>Повторы, левая <input id="rep-left" type="number" min="0" max="99"></label>
+        <label>правая <input id="rep-right" type="number" min="0" max="99"></label>
+      </div>
+      <ul id="errors"></ul>
+      <div class="row">
+        <button id="dup" class="btn ghost">Дублировать</button>
+        <button id="del" class="btn danger">Удалить</button>
+      </div>
+      <details class="help" open>
+        <summary>Как записывать</summary>
+        <p><code>Ab1</code> — нота (буква, <code>b</code>/<code>#</code>, октава) → «Ляb₁ (Ab₁)»</p>
+        <p><code>&gt;</code> — следующий столбец (стрелка)</p>
+        <p><code>[Ab0 Ab1]</code> — аккорд со скобкой «взять вместе»</p>
+        <p><code>{Bb1 B1 Eb2}</code> — стопка без скобки</p>
+        <p><code>Eb2~</code> — держать до конца, <code>Bb1~9</code> — до 9-го столбца (там черта)</p>
+        <p><code>_</code> — пустой столбец</p>
+      </details>
+    </aside>
+
+    <div id="zoom" class="zoom">
+      <button id="zoom-pct" title="Вписать по ширине">100%</button>
+      <button id="lock" title="Закрепить вид">🔓</button>
+    </div>
+  </main>
+
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>
