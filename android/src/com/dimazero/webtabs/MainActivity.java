@@ -127,8 +127,10 @@ public class MainActivity extends Activity {
 
     @Override
     public void onBackPressed() {
-        // «Назад» сначала снимает выделение блока (как Esc), а не закрывает приложение
-        web.evaluateJavascript("(function(){var s=window.webTabs;if(s&&s.selected){" +
+        // «Назад» сначала закрывает проигрыватель, потом снимает выделение блока (как Esc), а не закрывает приложение
+        web.evaluateJavascript("(function(){var p=document.getElementById('player');" +
+                "if(p&&!p.hidden){document.getElementById('pl-close').click();return 1}" +
+                "var s=window.webTabs;if(s&&s.selected){" +
                 "window.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'}));return 1}return 0})()",
                 r -> { if (!"1".equals(r)) MainActivity.super.onBackPressed(); });
     }
