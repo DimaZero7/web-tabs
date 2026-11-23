@@ -58,3 +58,18 @@ main { position: relative; height: calc(100% - 48px); }
 .zoom button { background: none; border: 0; color: var(--text); font: 600 14px "Segoe UI", sans-serif;
   padding: 6px 10px; border-radius: 999px; cursor: pointer; }
 .zoom button:hover { background: #2c2c30; }
+
+#sync { font-size: 16px; line-height: 1; }
+#sync.spin { animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+#setup { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  background: rgba(0,0,0,.6); padding: 24px; }
+#setup[hidden] { display: none; }
+.setup-card { max-width: 520px; background: var(--panel); border: 1px solid var(--line); border-radius: 18px;
+  padding: 28px; text-align: center; }
+.setup-card h1 { margin: 0 0 12px; font-size: 22px; }
+.setup-card p { color: var(--muted); margin: 0 0 12px; }
+.setup-card .hint { font-size: 13px; }
+.btn.big { font-size: 17px; padding: 12px 22px; margin-top: 8px; }
+.btn, .zoom button { white-space: nowrap; }

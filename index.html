@@ -13,6 +13,7 @@
     <a id="video" class="btn ghost" target="_blank" rel="noopener" hidden>Видео ↗</a>
     <span class="grow"></span>
     <span id="status" class="status"></span>
+    <button id="sync" class="btn ghost" title="Синхронизировать песню: сохранить свои правки и подтянуть свежую версию">⟳</button>
     <button id="undo" class="btn ghost" title="Отменить (Ctrl+Z)">↶</button>
     <button id="redo" class="btn ghost" title="Повторить (Ctrl+Shift+Z)">↷</button>
     <button id="add" class="btn">+ Блок</button>
@@ -49,6 +50,16 @@
         <p><code>_</code> — пустой столбец</p>
       </details>
     </aside>
+
+    <section id="setup" hidden>
+      <div class="setup-card">
+        <h1>Песни на Google Диске</h1>
+        <p>Подключите папку, где будут лежать песни, — один раз. Дальше они появляются и синхронизируются сами.</p>
+        <p class="hint">В окне выбора: Диск → Мой диск → «Новая папка» (например, <b>web-tabs</b>) → открыть её →
+          «Использовать эту папку».</p>
+        <button id="setup-btn" class="btn big">Подключить папку на Диске</button>
+      </div>
+    </section>
 
     <div id="zoom" class="zoom">
       <button id="zoom-pct" title="Вписать по ширине">100%</button>

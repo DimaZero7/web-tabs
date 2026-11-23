@@ -17,21 +17,25 @@ const state = {
 };
 
 // ---------- данные ----------
-const OPEN = '__open__', CREATE = '__create__', COPY = '__copy__', FORGET = '__forget__';
+const CREATE = '__create__', FOLDER = '__folder__';
+let folderName = '';
+let songList = [];
 
+// Список песен. На планшете — все песни из подключённой папки на Google Диске.
 async function loadSongList(selectId) {
   const list = await storage.list();
+  songList = list;
   const sel = $('song');
-  const extra = storage.open
-    ? `<option value="${OPEN}">＋ Открыть файл (Google Диск)…</option><option value="${CREATE}">＋ Новая песня…</option>` +
-      `<option value="${COPY}">＋ Сохранить копию на Диск…</option>` +
-      (list.length ? `<option value="${FORGET}">− Убрать песню из списка (файл останется)</option>` : '') : '';
+  const extra = storage.kind === 'android'
+    ? `<option value="${CREATE}">＋ Новая песня…</option>` +
+      `<option value="${FOLDER}">📁 Папка «${escapeHtml(folderName)}» — сменить…</option>` : '';
   sel.innerHTML = list.map(s => `<option value="${escapeHtml(s.id)}">${escapeHtml(s.title)}</option>`).join('') + extra;
-  const want = selectId || new URLSearchParams(location.search).get('song') || localStorage.getItem('wt-song');
+  const want = selectId || state.songId || new URLSearchParams(location.search).get('song') || localStorage.getItem('wt-song');
   state.songId = list.some(s => s.id === want) ? want : list[0]?.id || null;
   sel.value = state.songId ?? '';
   return list;
 }
+const sameList = (a, b) => a.length === b.length && a.every((x, i) => x.id === b[i].id && x.title === b[i].title);
 
 async function loadSong(keepView) {
   const song = await storage.read(state.songId);
@@ -69,21 +73,55 @@ async function save() {
   } finally { state.saving = false; }
 }
 
-// Правки файла снаружи (руками, Claude или с другого устройства через Диск) — подхватываем
-async function checkExternal() {
-  if (!state.songId || state.saving || state.dirtySince || document.hidden) return;
+// ---------- синхронизация (как в MyScript: кнопка ⟳ и автоматически) ----------
+// Сначала отправляем свои несохранённые правки, потом берём свежую версию файла
+// (на Android Google Диск подтягивает её из облака) и показываем, если она другая.
+const hhmm = () => new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+let syncing = false;
+async function syncNow(manual = false) {
+  if (syncing || document.hidden || !$('setup').hidden) return;
+  if (!manual && (drag || pinch || isTyping())) return;  // не мешаем, пока человек работает
+  syncing = true;
+  $('sync').classList.add('spin');
   try {
-    const mtime = await storage.mtime(state.songId);
-    if (mtime > state.mtime + 1) {
-      await loadSong(true);
-      // отмена не должна затирать правку, сделанную в файле
-      state.history = []; state.future = []; updateUndo();
-      setStatus('обновлено из файла');
+    if (state.dirtySince) { clearTimeout(saveTimer); await save(); }
+    // список песен: новые файлы в папке появляются сами
+    const fresh = await storage.list();
+    if (!sameList(fresh, songList)) {
+      const had = state.songId;
+      await loadSongList(had);
+      if (state.songId !== had) {                       // текущую песню удалили — открыть другую
+        state.selected = null; state.history = []; state.future = []; updateUndo();
+        if (state.songId) await loadSong(false); else { state.song = null; syncPanel(); render(); }
+      }
     }
-  } catch { /* сервер перезапускается или нет сети — попробуем позже */ }
+    if (!state.songId) { setStatus('в папке нет песен — «＋ Новая песня…»'); return; }
+    const { song, mtime } = await storage.sync(state.songId);
+    song.blocks ||= [];
+    for (const [i, b] of song.blocks.entries()) b.id ||= 'b' + (i + 1);
+    const changed = JSON.stringify(song) !== JSON.stringify(state.song);
+    if (changed && !state.dirtySince) {
+      state.song = song; state.mtime = mtime;
+      if (!state.song.blocks.some(b => b.id === state.selected)) state.selected = null;
+      state.history = []; state.future = []; updateUndo();   // отмена не должна затирать чужую правку
+      $('title').textContent = song.title || '';
+      syncPanel(); render();
+      setStatus('обновлено с Диска ' + hhmm());
+    } else {
+      setStatus('синхронизировано ' + hhmm());
+    }
+  } catch (e) {
+    setStatus('нет синхронизации: ' + e.message);
+  } finally {
+    syncing = false;
+    $('sync').classList.remove('spin');
+  }
 }
-setInterval(checkExternal, storage.kind === 'android' ? 8000 : 1500);
-document.addEventListener('visibilitychange', checkExternal);
+const isTyping = () => /^(TEXTAREA|INPUT)$/.test(document.activeElement?.tagName);
+$('sync').onclick = () => syncNow(true);
+// автоматически: при возвращении в приложение и периодически
+document.addEventListener('visibilitychange', () => { if (!document.hidden) syncNow(); });
+setInterval(() => syncNow(), storage.kind === 'android' ? 30000 : 3000);
 
 // ---------- отмена ----------
 function commit() {                                   // запомнить состояние ДО изменения
@@ -340,22 +378,12 @@ $('lock').onclick = () => {
 $('song').onchange = async e => {
   const v = e.target.value;
   try {
-    if (v === FORGET) {
-      if (state.songId && confirm('Убрать эту песню из списка? Сам файл не удаляется.')) {
-        await storage.forget(state.songId);
-        state.song = null; state.selected = null;
-        await loadSongList();
-        if (state.songId) await loadSong(false); else { syncPanel(); render(); setStatus('список пуст: откройте файл с Диска'); }
-      } else $('song').value = state.songId ?? '';
-      return;
-    }
-    if (v === OPEN || v === CREATE || v === COPY) {
-      const suggested = v === COPY ? (state.song?.title || 'Песня') : 'Новая песня';
-      const title = v === OPEN ? null : prompt('Название песни', suggested);
-      if ((v !== OPEN && !title) || (v === COPY && !state.song)) { $('song').value = state.songId ?? ''; return; }
-      const f = v === OPEN ? await storage.open() : await storage.create(title);
-      if (v === CREATE) await storage.write(f.id, emptySong(title));
-      if (v === COPY) await storage.write(f.id, { ...state.song, title });
+    if (v === FOLDER) { await connectFolder(); return; }
+    if (v === CREATE) {
+      const title = prompt('Название песни', 'Новая песня');
+      if (!title) { $('song').value = state.songId ?? ''; return; }
+      const f = await storage.create(title);
+      await storage.write(f.id, emptySong(title));
       await loadSongList(f.id);
     } else {
       state.songId = v;
@@ -368,6 +396,24 @@ $('song').onchange = async e => {
     if (!/отмен/i.test(err.message)) setStatus('ошибка: ' + err.message);
   }
 };
+
+// Подключить папку с песнями на Google Диске (один раз; потом — только если сменить)
+async function connectFolder() {
+  try {
+    const f = await storage.pickFolder();
+    folderName = f.name || 'папка';
+    $('setup').hidden = true;
+    state.songId = null; state.song = null; state.selected = null;
+    await loadSongList();
+    if (state.songId) await loadSong(false);
+    else { syncPanel(); render(); setStatus('в папке нет песен — «＋ Новая песня…»'); }
+  } catch (err) {
+    $('song').value = state.songId ?? '';
+    if (!/отмен/i.test(err.message)) setStatus('ошибка: ' + err.message);
+  }
+}
+$('setup-btn').onclick = connectFolder;
+
 // PNG блока для вставки в MyScript: клетка = U пикселей, прозрачный фон, поля по полклетки
 $('png').onclick = () => {
   const b = block(state.selected) || state.song.blocks[0];
@@ -395,9 +441,14 @@ window.webTabs = state;                               // для отладки �
 // ---------- старт ----------
 (async () => {
   try {
+    if (storage.kind === 'android') {
+      const f = await storage.folder();
+      if (!f.uri) { $('setup').hidden = false; render(); return; }   // первый запуск: подключить папку
+      folderName = f.name || 'папка';
+    }
     await loadSongList();
     if (!state.songId) {
-      setStatus(storage.open ? 'выберите в списке: открыть файл с Диска или новая песня' : 'нет песен в папке songs/');
+      setStatus(storage.kind === 'android' ? 'в папке нет песен — «＋ Новая песня…»' : 'нет песен в папке songs/');
       render(); return;
     }
     await document.fonts?.ready;

@@ -4,7 +4,9 @@
 //    через системное окно Android; читает и пишет их приложение, Диск синхронизирует сам.
 //
 // Действия: list() → [{ id, title }], read(id) → песня, write(id, song) → mtime, mtime(id) → число,
-//           и только на Android: open() / create(title) → { id, title } (выбор/создание файла), forget(id).
+//           sync(id) → { song, mtime } — свежая версия (на Android Диск сначала подтягивает файл из облака),
+//           и только на Android: folder() / pickFolder() — папка с песнями на Google Диске (подключается
+//           один раз, дальше список песен собирается сам), create(title) → { id, title } — новая песня в папке.
 
 async function api(path, opts) {
   const r = await fetch(path, opts);
@@ -20,6 +22,8 @@ const serverStorage = {
     method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(song),
   })).mtime,
   mtime: async id => (await api(`/api/songs/${encodeURIComponent(id)}/mtime`)).mtime,
+  sync: async id => ({ song: await api(`/api/songs/${encodeURIComponent(id)}`),
+    mtime: (await api(`/api/songs/${encodeURIComponent(id)}/mtime`)).mtime }),
 };
 
 // Мост к Android: window.WebTabsAndroid (Java, addJavascriptInterface). Методы моста синхронные
@@ -49,6 +53,9 @@ function androidStorage(bridge) {
     read: async id => JSON.parse(call('read', id).text),
     write: async (id, song) => call('write', id, JSON.stringify(song, null, 2)).mtime,
     mtime: async id => call('mtime', id).mtime,
+    sync: async id => { const r = call('sync', id); return { song: JSON.parse(r.text), mtime: r.mtime }; },
+    folder: async () => call('folder'),
+    pickFolder: () => ask('pickFolder'),
     open: () => ask('open'),
     create: title => ask('create', title),
     forget: async id => call('forget', id),
