@@ -49,6 +49,8 @@ public class MainActivity extends Activity {
         prefs = getSharedPreferences("songs", MODE_PRIVATE);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
 
+        // отладка WebView по USB (adb): с компьютера можно прочитать/записать песню через само приложение
+        WebView.setWebContentsDebuggingEnabled(true);
         web = new WebView(this);
         web.setBackgroundColor(0xFF000000);
         WebSettings s = web.getSettings();

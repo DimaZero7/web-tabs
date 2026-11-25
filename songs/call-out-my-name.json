@@ -25,6 +25,14 @@
       "left": "Eb1 > Gb1 > Ab1 > [Ab0 Ab1] > Gb1 > Eb1 > Ab1 > Gb1 > Eb1",
       "right": "Bb2 > Db3 > Eb3 > {Eb2~ Bb2} > {_ Ab2~}",
       "reps": [1, 1]
+    },
+    {
+      "id": "b4",
+      "x": 1,
+      "y": 34,
+      "left": "[Ab0 Ab1] > Gb1 > Eb1 > Ab1 > Gb1 > Eb1 > [Eb0 Eb1] > Db1 > Bb0 > Eb1 > Db1 > Bb0 > [Eb0 Eb1] > Db1 > Bb0",
+      "right": "_ > _ > _ > Bb2 > Db3 > Eb3 > {Db2~9 Bb2} > Ab2 > Eb2 > Gb2 > _ > Ab2 > Eb2~",
+      "reps": [1, 1]
     }
   ]
 }
