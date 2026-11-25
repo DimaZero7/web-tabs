@@ -3,6 +3,7 @@ import { songMetrics, layoutBlock } from './layout.js';
 import { drawGrid, drawItems, makeMeasure } from './draw.js';
 import { storage, emptySong } from './storage.js';
 import { openPlayer } from './player.js';
+import { midiAvailable } from './midi.js';
 
 const CELL_100 = 5 * 96 / 25.4;        // клетка 5 мм в CSS-пикселях = масштаб 100%
 const Z_MIN = CELL_100 * 0.25, Z_MAX = CELL_100 * 10;
@@ -367,8 +368,20 @@ for (const id of ['left', 'right', 'rep-left', 'rep-right']) {
 // ---------- кнопки ----------
 $('add').onclick = addBlock;
 // Режим «на пианино»: кнопка в панели блока или двойной клик / двойное касание по блоку
-const showPiano = id => { const b = block(id); if (b) openPlayer({ song: state.song, block: b, measure }); };
+const showPiano = (id, mode) => {
+  const b = block(id);
+  if (b) openPlayer({ song: state.song, getSong: () => state.song, block: b, measure, mode });
+};
 $('piano').onclick = () => showPiano(state.selected);
+// тренировка с пианино — только там, где браузер умеет MIDI (в Android-приложении пока нет)
+if (midiAvailable()) {
+  $('practice').onclick = () => showPiano(state.selected, 'practice');
+  // вся песня: все блоки подряд, с первого по последний
+  $('practice-song').onclick = () => {
+    const n = state.song?.blocks.length;
+    if (n) openPlayer({ song: state.song, getSong: () => state.song, from: 0, to: n - 1, measure, mode: 'practice' });
+  };
+} else for (const el of [$('practice'), $('practice-song'), document.querySelector('#pl-mode')]) el.style.display = 'none';
 canvas.addEventListener('dblclick', e => { const p = pos(e); const box = hit(p.x, p.y); if (box) showPiano(box.id); });
 $('dup').onclick = duplicate;
 $('del').onclick = removeSelected;

@@ -135,3 +135,44 @@ main { position: relative; height: calc(100% - 48px); }
   .pl-bar { grid-template-columns: auto minmax(0, 1fr); }
   .pl-info { display: none; }
 }
+
+/* ---------- вторая строка проигрывателя: режим, блоки, тренировка ---------- */
+.pl-row2 { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 8px 16px 0; background: #08080a;
+  font-size: 13px; color: #c9c9cf; }
+.pl-row2 .seg { margin-right: 0; }
+.pl-range { display: flex; align-items: center; gap: 4px; color: var(--muted); }
+.pl-row2 select, .pl-row2 input { padding: 3px 6px; font-size: 13px; }
+.pl-row2 input[type=number] { width: 64px; }
+.pl-practice { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; flex-wrap: wrap; }
+.pl-practice[hidden] { display: none; }
+.pl-practice label { display: flex; align-items: center; gap: 6px; color: var(--muted); }
+.pl-count b { color: #fff; font-size: 15px; }
+.pl-count .dim { color: var(--muted); }
+.pl-row2 .ok, .pl-done .ok { color: #3fd68b; }
+.pl-row2 .bad, .pl-done .bad { color: #ffb45a; }
+.pl-midi { font-size: 12px; white-space: nowrap; }
+/* в тренировке нет пуска, шагов, скорости и круга: шаги идут по нажатиям клавиш */
+#player.practice .watch-only { display: none; }
+#player.practice #pl-canvas, #player.practice .pl-progress button { cursor: default; }
+.pl-progress button.seg-start { margin-left: 6px; }
+.pl-progress button.err { background: #ff6b6b; }
+.pl-progress button.err.done { background: #d65050; }
+
+/* итог тренировки */
+.pl-done { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  background: rgba(0,0,0,.55); padding: 24px; }
+.pl-done[hidden] { display: none; }
+.pl-done-card { max-width: 560px; width: 100%; max-height: 100%; overflow: auto; background: var(--panel);
+  border: 1px solid var(--line); border-radius: 18px; padding: 24px 28px; }
+.pl-done h2 { margin: 0 0 8px; font-size: 22px; }
+.pl-done h3 { margin: 16px 0 6px; font-size: 14px; color: var(--muted); font-weight: 600; }
+.pl-done p { margin: 4px 0; }
+.pl-done ul { margin: 0; padding-left: 18px; }
+.pl-done li { margin: 4px 0; }
+.pl-passes { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 10px; }
+.pl-passes span { min-width: 26px; height: 26px; display: grid; place-items: center; border-radius: 7px;
+  background: rgba(255,255,255,0.06); font-weight: 600; font-size: 12px; }
+@media (max-width: 780px) {
+  .pl-row2 { padding: 6px 10px 0; gap: 8px; }
+}
+.pl-midi.retry { cursor: pointer; text-decoration: underline dotted; }

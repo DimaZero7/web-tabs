@@ -1,15 +1,21 @@
 // Режим «на пианино»: блок сверху (текущий шаг подсвечен), падающие ноты
 // (левая рука — синяя, правая — зелёная) и клавиатура с нажатыми клавишами.
-import { blockTimeline, columnAt } from './timeline.js';
+// Можно взять несколько блоков подряд (или всю песню) — они идут один за другим.
+// Два режима: «Смотреть» (ноты падают сами) и «Тренировка» (пианино по кабелю: ноты ждут
+// у клавиатуры, пока не нажмёшь правильные клавиши; неверная — тихий сигнал; счётчики проходов).
+import { columnAt } from './timeline.js';
 import { songMetrics, layoutBlock, ARROW_W } from './layout.js';
 import { drawItems, FONT } from './draw.js';
 import { RU, parseRow } from './notation.js';
 import { ICON } from './icons.js';
+import { sequence, practiceSteps, Trainer, noteName, MIDI_OFFSET } from './practice.js';
+import { listenMidi, retryMidi } from './midi.js';
 
 const BG = '#08080a';
 const HAND = {
   L: { base: '#5b8eff', light: '#a3c0ff', deep: '#2f5fd2', rgb: '91,142,255' },
   R: { base: '#3fd68b', light: '#94f1c1', deep: '#1c9a5d', rgb: '63,214,139' },
+  X: { base: '#ff5d5d', light: '#ffb3b3', deep: '#c62f2f', rgb: '255,93,93' },   // неверная клавиша
 };
 const OCT = '255,84,84';                                  // линии и номера октав
 const WHITE_OF = { 0: 'C', 2: 'D', 4: 'E', 5: 'F', 7: 'G', 9: 'A', 11: 'B' };
@@ -22,21 +28,40 @@ const save = (k, v) => { try { localStorage.setItem(k, String(v)); } catch { /* 
 
 let current = null;                                       // открытый проигрыватель (один на страницу)
 
-export function openPlayer({ song, block, measure }) {
+/**
+ * Открыть проигрыватель. block — с какого блока (или from/to — номера блоков в песне, с 0),
+ * mode: 'watch' — смотреть, 'practice' — тренировка с пианино.
+ */
+export function openPlayer({ song, getSong, block, from, to, measure, mode = 'watch' }) {
   current?.close();
+  let closed = false;
   const $ = id => document.getElementById(id);
   const root = $('player'), canvas = $('pl-canvas'), ctx = canvas.getContext('2d');
   const ui = {
     title: $('pl-title'), step: $('pl-step'), play: $('pl-play'), loop: $('pl-loop'),
     sound: $('pl-sound'), speed: $('pl-speed'), progress: $('pl-progress'),
+    mode: $('pl-mode'), from: $('pl-from'), to: $('pl-to'), practice: $('pl-practice'),
+    goal: $('pl-goal'), goalKind: $('pl-goal-kind'), count: $('pl-count'), midi: $('pl-midi'),
+    done: $('pl-done'), doneBody: $('pl-done-body'), again: $('pl-again'),
   };
-  const { events, total } = blockTimeline(block);
+  const practice = mode === 'practice';
+  const all = song.blocks;
+  const last = Math.max(0, all.length - 1);
+  const a = clamp(from ?? Math.max(0, all.indexOf(block)), 0, last);
+  const b = clamp(Math.max(a, to ?? a), 0, last);
+  const seq = sequence(all.slice(a, b + 1));
+  const { events, total } = seq;
   const metrics = songMetrics(song, measure);
-  const lay = layoutBlock(block, metrics, measure);
-  const n = song.blocks.indexOf(block) + 1;
-  // граница рук в блоке (в клетках) — как в layoutBlock
-  const rowsOf = { L: parseRow(block.left).cols, R: parseRow(block.right).cols };
-  const HT = Math.max(1, ...parseRow(block.left).cols.map(c => (c ? c.notes.length : 0))) + 2;
+  // по блоку: раскладка, строки рук, граница рук (в клетках) — как в layoutBlock
+  const segs = seq.segments.map(s => {
+    const rowsOf = { L: parseRow(s.block.left).cols, R: parseRow(s.block.right).cols };
+    return {
+      ...s, n: all.indexOf(s.block) + 1, lay: layoutBlock(s.block, metrics, measure), rowsOf,
+      HT: Math.max(1, ...rowsOf.L.map(c => (c ? c.notes.length : 0))) + 2,
+    };
+  });
+  const maxH = Math.max(...segs.map(s => s.lay.h));
+  const segAt = t => { let i = 0; while (i + 1 < segs.length && t >= segs[i + 1].offset) i++; return i; };
 
   // диапазон клавиатуры: целые октавы от самой низкой ноты до самой высокой (не меньше трёх)
   const pitches = events.map(e => e.pitch);
@@ -61,8 +86,18 @@ export function openPlayer({ song, block, measure }) {
     speed: SPEEDS.reduce((a, b) => (Math.abs(b - saved) < Math.abs(a - saved) ? b : a)),
     loop: load('wt-loop', '1') !== '0',
     sound: load('wt-sound', '0') === '1',
+    signal: load('wt-signal', '1') !== '0',               // тренировка: сигнал ошибки и конца прохода
   };
   const shown = { step: -1, playing: null };             // что сейчас показано в панели
+
+  // ---------- тренировка ----------
+  const steps = practice ? practiceSteps(seq) : [];
+  const goal = { n: Math.max(1, Number(load('wt-goal', 10)) || 10), kind: load('wt-goal-kind', 'clean') };
+  const tr = new Trainer(steps, goal);
+  // что показывать в блоке и на полосе: в тренировке — шаг, который ждём (ноты к нему ещё доезжают)
+  const viewT = () => (practice && tr.step ? tr.step.t : st.t);
+  const keysDown = new Map();                            // нажатые на пианино: высота записи → 'L' | 'R' | 'X'
+  const fx = { flashes: [], toast: null };              // вспышки неверных клавиш, надпись о проходе
 
   // ---------- обработчики (все снимаются при закрытии) ----------
   const offs = [];
@@ -123,16 +158,52 @@ export function openPlayer({ song, block, measure }) {
     if (!st.sound || !ensureAudio()) return;
     for (const i of activeAt(st.t)) voices.set('p' + i, voice(events[i].pitch, true));
   }
+  // сигналы тренировки: мягкий, но слышный «бум» вниз — неверная клавиша; два светлых тона — чистый проход
+  function tone(f0, f1, t0, dur, vol) {
+    const o = audio.createOscillator(), g = audio.createGain();
+    o.type = 'triangle';
+    o.frequency.setValueAtTime(f0, t0);
+    if (f1 !== f0) o.frequency.exponentialRampToValueAtTime(f1, t0 + dur * 0.8);
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(vol, t0 + 0.012);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    o.connect(g); g.connect(master); o.start(t0); o.stop(t0 + dur + 0.05);
+  }
+  let lastBeep = -1e9;
+  function beep(kind) {
+    if (!st.signal || !ensureAudio()) return;
+    const t0 = audio.currentTime;
+    if (kind === 'wrong') {
+      const wall = performance.now();                     // не currentTime: он стоит, пока звук не разрешён
+      if (wall - lastBeep < 250) return;                  // несколько лишних клавиш разом — один сигнал
+      lastBeep = wall;
+      tone(311, 207, t0, 0.24, 0.3);
+    } else if (kind === 'clean') { tone(659, 659, t0, 0.3, 0.13); tone(988, 988, t0 + 0.13, 0.45, 0.13); }
+    else tone(523, 523, t0, 0.3, 0.11);
+  }
 
   // ---------- панель ----------
-  ui.title.textContent = `${song.title || 'Песня'} · Блок ${n}`;
+  const range = segs.length > 1 ? `Блоки ${segs[0].n}–${segs.at(-1).n}` : `Блок ${segs[0].n}`;
+  ui.title.textContent = `${song.title || 'Песня'} · ${range}`;
   for (const id of ['start', 'prev', 'next', 'close']) $('pl-' + id).innerHTML = ICON[id];
+  $('pl-start').title = practice ? 'Начать проход заново (не засчитывается)' : 'В начало';
   ui.loop.innerHTML = ICON.loop;
+  root.classList.toggle('practice', practice);
+  for (const btn of ui.mode.querySelectorAll('button[data-mode]')) btn.classList.toggle('on', btn.dataset.mode === mode);
+  // выбор блоков: с какого по какой (все — вся песня)
+  const opts = all.map((_, i) => `<option value="${i}">${i + 1}</option>`).join('');
+  ui.from.innerHTML = opts; ui.to.innerHTML = opts;
+  ui.from.value = String(a); ui.to.value = String(b);
+  ui.practice.hidden = !practice;
+  ui.done.hidden = true;
+  ui.goal.value = String(goal.n); ui.goalKind.value = tr.goal.kind;
   const setLoop = () => { ui.loop.classList.toggle('on', st.loop); ui.loop.setAttribute('aria-pressed', st.loop); };
   const setSound = () => {
-    ui.sound.innerHTML = st.sound ? ICON.sound : ICON.mute;
-    ui.sound.classList.toggle('on', st.sound); ui.sound.setAttribute('aria-pressed', st.sound);
-    ui.sound.title = st.sound ? 'Звук включён' : 'Звук выключен';
+    const onNow = practice ? st.signal : st.sound;
+    ui.sound.innerHTML = onNow ? ICON.sound : ICON.mute;
+    ui.sound.classList.toggle('on', onNow); ui.sound.setAttribute('aria-pressed', onNow);
+    ui.sound.title = practice ? (onNow ? 'Сигнал ошибки включён' : 'Сигнал ошибки выключен')
+      : (onNow ? 'Звук включён' : 'Звук выключен');
   };
   const setSpeed = () => {
     for (const b of ui.speed.querySelectorAll('button[data-speed]')) b.classList.toggle('on', Number(b.dataset.speed) === st.speed);
@@ -140,20 +211,26 @@ export function openPlayer({ song, block, measure }) {
   setLoop(); setSound(); setSpeed();
 
   // полоса шагов: по кнопке на шаг
-  const steps = [];
+  // полоса шагов: по кнопке на шаг; начало каждого следующего блока — с отступом
+  const stepBtns = [];
   ui.progress.replaceChildren();
   for (let i = 0; i < total; i++) {
-    const b = document.createElement('button');
-    b.type = 'button'; b.title = `Шаг ${i + 1}`; b.dataset.step = i;
-    steps.push(b); ui.progress.append(b);
+    const btn = document.createElement('button');
+    const sg = segs[segAt(i)];
+    btn.type = 'button'; btn.title = `Блок ${sg.n}, шаг ${i - sg.offset + 1}`; btn.dataset.step = i;
+    if (i > 0 && i === sg.offset) btn.classList.add('seg-start');
+    stepBtns.push(btn); ui.progress.append(btn);
   }
 
   // обновить панель — только когда сменился шаг или пуск/пауза
   function syncUI() {
-    const s = clamp(Math.floor(st.t), 0, total - 1);
+    const s = clamp(Math.floor(viewT() + 1e-6), 0, total - 1);
     if (s !== shown.step) {
-      steps.forEach((b, i) => { b.classList.toggle('done', i < s); b.classList.toggle('now', i === s); });
-      const at = columnAt(block, s), parts = [`шаг ${s + 1} / ${total}`];
+      stepBtns.forEach((btn, i) => { btn.classList.toggle('done', i < s); btn.classList.toggle('now', i === s); });
+      const sg = segs[segAt(s)], ls = s - sg.offset;
+      const at = columnAt(sg.block, ls), parts = [];
+      if (segs.length > 1) parts.push(`блок ${sg.n}`);
+      parts.push(`шаг ${ls + 1} / ${sg.total}`);
       if (at.L?.reps > 1) parts.push(`левая: повтор ${at.L.rep} / ${at.L.reps}`);
       if (at.R?.reps > 1) parts.push(`правая: повтор ${at.R.rep} / ${at.R.reps}`);
       ui.step.textContent = parts.join(' · ');
@@ -189,20 +266,22 @@ export function openPlayer({ song, block, measure }) {
     // и не опускается ниже ~13 px, пока зоне падения остаётся хоть какое-то место
     const by = pad + 2, strip = 24;                       // strip — полоса номеров октав над зоной падения
     const laneMin = Math.max(80, H * 0.2);
-    const zPref = clamp(H * 0.04, 22, 32), zCap = (ky - by - strip - laneMin) / lay.h;
+    // блоки разной высоты: место под блок — по самому высокому, чтобы зона падения не прыгала
+    const vt = viewT(), si = segAt(vt), sg = segs[si], lay = sg.lay, HT = sg.HT;
+    const zPref = clamp(H * 0.04, 22, 32), zCap = (ky - by - strip - laneMin) / maxH;
     const z = Math.max(4, Math.min((W - 2 * pad) / lay.w, zPref, zCap));
-    const bw = lay.w * z, bh = lay.h * z, bx = (W - bw) / 2;
-    const laneTop = by + bh + strip, laneBot = ky - 3, laneH = laneBot - laneTop;
+    const bw = lay.w * z, bx = (W - bw) / 2;
+    const laneTop = by + maxH * z + strip, laneBot = ky - 3, laneH = laneBot - laneTop;
     const perStep = laneH / LOOKAHEAD;
 
     // 1) блок: текущие столбцы — мягкая подсветка цветом руки; удерживаемые ноты — слабее
-    const at = columnAt(block, Math.min(t, total - 0.001));
+    const at = columnAt(sg.block, clamp(vt - sg.offset, 0, sg.total - 0.001));
     const colX = i => 1 + i * (metrics.colW + ARROW_W);
     // удерживаемые — только те строки стопки, что реально звучат: [столбец, строка]
     const held = { L: [], R: [] };
     for (const e of events) {
-      if (!(t >= e.start && t < e.end) || at[e.hand]?.col === e.col) continue;
-      const row = rowsOf[e.hand][e.col]?.notes.findIndex(n => n && n.pitch === e.pitch) ?? -1;
+      if (e.seg !== si || !(vt >= e.start && vt < e.end) || at[e.hand]?.col === e.col) continue;
+      const row = sg.rowsOf[e.hand][e.col]?.notes.findIndex(n => n && n.pitch === e.pitch) ?? -1;
       if (row >= 0) held[e.hand].push([e.col, row]);
     }
     for (const [hand, top, bottom] of [['L', 0, HT], ['R', HT, lay.h]]) {
@@ -222,8 +301,14 @@ export function openPlayer({ song, block, measure }) {
     drawItems(ctx, lay.items, bx, by, z,'rgba(232,232,238,0.92)');
 
     // 2) зона падения
+    // смотреть — горят клавиши, что звучат по записи; тренировка — те, что нажаты на пианино
     const pressed = new Map();                            // pitch → рука
-    for (const e of events) if (t >= e.start && t < e.end) pressed.set(e.pitch, e.hand);
+    if (practice) for (const [p, h] of keysDown) pressed.set(p, h);
+    else for (const e of events) if (t >= e.start && t < e.end) pressed.set(e.pitch, e.hand);
+    // тренировка: ноты текущего шага, которые уже нажаты, — бледнее (ждём остальные)
+    const waitT = practice && tr.step && !tr.done ? tr.step.t : null;
+    const gotIt = e => waitT !== null && e.start === waitT && tr.got.has(e.pitch + MIDI_OFFSET);
+    const nowMs = performance.now();
     if (laneH > 20) {
       ctx.save();
       ctx.beginPath(); ctx.rect(kx, laneTop, W - 2 * pad, laneH); ctx.clip();
@@ -263,6 +348,7 @@ export function openPlayer({ song, block, measure }) {
           }
         }
         if (headOn && hBot - yHead > 2) {
+          ctx.globalAlpha = gotIt(e) ? 0.3 : 1;
           const g = ctx.createLinearGradient(0, yHead, 0, hBot);
           g.addColorStop(0, c.base); g.addColorStop(1, c.light);
           ctx.shadowColor = `rgba(${c.rgb},${active ? 0.65 : 0.4})`; ctx.shadowBlur = (active ? 14 : 8) * dpr;
@@ -270,6 +356,7 @@ export function openPlayer({ song, block, measure }) {
           ctx.shadowBlur = 0; ctx.shadowColor = 'transparent';
           ctx.strokeStyle = 'rgba(255,255,255,0.28)'; ctx.lineWidth = 1;
           rr(ctx, x + 0.5, yHead + 0.5, nw - 1, hBot - yHead - 1, r); ctx.stroke();
+          ctx.globalAlpha = 1;
         }
         if (labels) {
           // тёмная на светлой голове, светлая — на теле удержания у линии удара
@@ -287,6 +374,25 @@ export function openPlayer({ song, block, measure }) {
       const fade = Math.min(64, laneH * 0.3), fg = ctx.createLinearGradient(0, laneTop, 0, laneTop + fade);
       fg.addColorStop(0, 'rgba(8,8,10,1)'); fg.addColorStop(1, 'rgba(8,8,10,0)');
       ctx.fillStyle = fg; ctx.fillRect(kx, laneTop, W - 2 * pad, fade);
+
+      // тренировка: красная вспышка над неверной клавишей
+      for (const f of fx.flashes) {
+        const left = (f.until - nowMs) / 450, k = byPitch.get(f.pitch);
+        if (left <= 0 || !k) continue;
+        const w = kw * k.w, cx = X(k) + w / 2, gh = Math.min(laneH, 140);
+        const g = ctx.createLinearGradient(0, laneBot - gh, 0, laneBot);
+        g.addColorStop(0, `rgba(${HAND.X.rgb},0)`); g.addColorStop(1, `rgba(${HAND.X.rgb},${0.55 * left})`);
+        ctx.fillStyle = g; ctx.fillRect(cx - w / 2, laneBot - gh, w, gh);
+      }
+      // надпись о законченном проходе — посередине зоны падения, тает
+      if (fx.toast && fx.toast.until > nowMs) {
+        const left = Math.min(1, (fx.toast.until - nowMs) / 600);
+        const fsz = clamp(laneH * 0.12, 16, 34);
+        ctx.font = `600 ${fsz}px ${FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillStyle = `rgba(${fx.toast.rgb},${0.95 * left})`;
+        ctx.fillText(fx.toast.text, W / 2, laneTop + laneH * 0.42);
+        ctx.textBaseline = 'alphabetic';
+      }
       ctx.restore();
     }
     // границы октав (Си|До) — поверх нот; номера — в своей полосе над зоной падения, где нот нет
@@ -375,20 +481,33 @@ export function openPlayer({ song, block, measure }) {
   // ---------- время ----------
   function frame(now) {
     st.raf = 0;
-    if (st.playing) {
-      const dt = clamp((now - st.last) / 1000, 0, 0.1); st.last = now;
+    const dt = clamp((now - st.last) / 1000, 0, 0.1); st.last = now;
+    let more = false;
+    if (practice) {
+      // ноты плавно доезжают до клавиатуры и стоят, пока шаг не собран
+      const target = tr.step ? tr.step.t : st.t;
+      if (Math.abs(target - st.t) > 0.002) { st.t += (target - st.t) * (1 - Math.exp(-dt * 14)); more = true; }
+      else st.t = target;
+      more ||= fx.flashes.some(f => f.until > now) || (fx.toast?.until ?? 0) > now;
+    } else if (st.playing) {
       st.t += dt * st.speed;
       if (st.t >= total) {
         if (st.loop) { st.t %= total; stopAll(); }       // новый круг — ноты звучат заново
         else { st.t = total - 0.001; st.playing = false; stopAll(); }
       }
       if (st.playing) sound(st.t);
+      more = st.playing;
     }
     draw(); syncUI();
-    if (st.playing) st.raf = requestAnimationFrame(frame);
+    if (more) st.raf = requestAnimationFrame(frame);
   }
-  // во время игры рисует кадр анимации, на паузе — сразу; панель обновляется сразу
-  const request = () => { if (st.playing) st.raf ||= requestAnimationFrame(frame); else draw(); syncUI(); };
+  // во время игры (и в тренировке) рисует кадрами анимации, на паузе — сразу; панель обновляется сразу
+  const request = () => {
+    if (practice || st.playing) {
+      if (!st.raf) { st.last = performance.now(); st.raf = requestAnimationFrame(frame); }
+    } else draw();
+    syncUI();
+  };
   const play = () => {
     if (st.t >= total - 0.01) st.t = 0;
     if (st.sound) ensureAudio();                          // внутри жеста пользователя
@@ -414,6 +533,10 @@ export function openPlayer({ song, block, measure }) {
   on(window, 'keydown', e => {
     e.stopImmediatePropagation();                         // доска под проигрывателем клавиш не получает
     if (e.key === 'Escape') { e.preventDefault(); close(); }
+    else if (practice) {
+      // тренировка: поля цели вводятся как обычно; Home — проход заново
+      if (e.key === 'Home' && !e.target.closest?.('input')) { e.preventDefault(); restartPass(); }
+    }
     else if (e.key === ' ') { e.preventDefault(); if (!e.repeat) toggle(); }
     else if (e.key === 'ArrowRight') { e.preventDefault(); step(1); }
     else if (e.key === 'ArrowLeft') { e.preventDefault(); step(-1); }
@@ -428,13 +551,15 @@ export function openPlayer({ song, block, measure }) {
     'pl-play': toggle,
     'pl-prev': () => step(-1),
     'pl-next': () => step(1),
-    'pl-start': () => { st.t = 0; pause(); },
+    'pl-start': () => { if (practice) restartPass(); else { st.t = 0; pause(); } },
     'pl-loop': () => { st.loop = !st.loop; save('wt-loop', st.loop ? 1 : 0); setLoop(); },
     'pl-sound': () => {
+      if (practice) { st.signal = !st.signal; save('wt-signal', st.signal ? 1 : 0); setSound(); if (st.signal) beep('pass'); return; }
       st.sound = !st.sound; save('wt-sound', st.sound ? 1 : 0); setSound();
       if (!st.sound) stopAll(); else if (st.playing) sound(st.t); else preview();
     },
     'pl-close': () => close(),
+    'pl-again': () => { tr.reset(); ui.done.hidden = true; st.t = 0; markErrors(); updateCount(); request(); },
   };
   for (const [id, fn] of Object.entries(handlers)) on($(id), 'click', fn);
   on(ui.speed, 'click', e => {
@@ -442,24 +567,149 @@ export function openPlayer({ song, block, measure }) {
     st.speed = Number(b.dataset.speed); save('wt-speed', st.speed); setSpeed();
   });
   on(ui.progress, 'click', e => {
+    if (practice) return;                                 // в тренировке шаги идут только по нажатиям
     const b = e.target.closest('button[data-step]'); if (b) seek(Number(b.dataset.step));
   });
   // клик по холсту: левая половина — шаг назад, правая — вперёд
   on(canvas, 'click', e => {
+    if (practice) return;
     const r = canvas.getBoundingClientRect();
     step(e.clientX - r.left > r.width / 2 ? 1 : -1);
   });
+  // режим и блоки: проигрыватель открывается заново с новым выбором (счёт тренировки — с нуля)
+  // песню берём свежую (её могла заменить синхронизация), а фокус снимаем — стрелки/Home не меняют выбор
+  const reopen = (m, f, t2) => { document.activeElement?.blur?.(); openPlayer({ song: getSong?.() || song, getSong, from: f, to: t2, measure, mode: m }); };
+  on(ui.mode, 'click', e => {
+    const btn = e.target.closest('button[data-mode]');
+    if (btn && btn.dataset.mode !== mode) reopen(btn.dataset.mode, a, b);
+  });
+  on(ui.from, 'change', () => { const f = Number(ui.from.value); reopen(mode, f, Math.max(f, b)); });
+  on(ui.to, 'change', () => { const t2 = Number(ui.to.value); reopen(mode, Math.min(a, t2), t2); });
+  // цель: число и что считать; меняется на ходу, счёт не сбрасывается
+  // цель уже достигнута (например, снизили число) — итог сразу
+  const goalChanged = () => { updateCount(); if (!tr.done && tr.stats.passes && tr.reached) { tr.done = true; showDone(); } };
+  on(ui.goal, 'change', () => {
+    const v = Math.floor(Number(ui.goal.value));
+    if (v >= 1) { tr.goal.n = v; save('wt-goal', v); } else ui.goal.value = String(tr.goal.n);
+    goalChanged();
+  });
+  on(ui.goalKind, 'change', () => {
+    tr.goal.kind = ui.goalKind.value; save('wt-goal-kind', tr.goal.kind); ui.goalKind.blur(); goalChanged();
+  });
+  on(ui.midi, 'click', () => { if (ui.midi.classList.contains('retry')) retryMidi(); });
+
+  // ---------- тренировка: пианино ----------
+  const nameOf = midi => noteName(midi);
+  const plural = (n, one, few, many) => {
+    const d = n % 10, h = n % 100;
+    return d === 1 && h !== 11 ? one : d >= 2 && d <= 4 && (h < 12 || h > 14) ? few : many;
+  };
+  const errText = n => plural(n, 'ошибка', 'ошибки', 'ошибок');
+  function updateCount() {
+    if (!practice) return;
+    const s = tr.stats, g = tr.goal, errs = tr.errors.length;
+    if (!steps.length) { ui.count.textContent = 'В выбранных блоках нет нот'; return; }
+    const main = g.kind === 'clean'
+      ? `Чистых подряд: <b>${s.streak}</b> / ${g.n}`
+      : `Проходов: <b>${s.passes}</b> / ${g.n}`;
+    const rest = g.kind === 'clean'
+      ? `всего проходов ${s.passes}, чистых ${s.clean}`
+      : `чистых ${s.clean}, подряд ${s.streak}`;
+    ui.count.innerHTML = `${main} <span class="dim">· ${rest} · сейчас:</span> ` +
+      `<span class="${errs ? 'bad' : 'ok'}">${errs ? `${errs} ${errText(errs)}` : 'без ошибок'}</span>`;
+  }
+  // полоса шагов: где в этом проходе были ошибки
+  function markErrors() {
+    const bad = new Set(tr.errors.map(x => steps[x.step].t));
+    stepBtns.forEach((btn, i) => btn.classList.toggle('err', bad.has(i)));
+  }
+  function restartPass() {
+    if (tr.done) return;
+    tr.restart(); st.t = 0; markErrors(); updateCount(); request();
+  }
+  // итог: проходы и где чаще ошибался
+  function showDone() {
+    const s = tr.stats, where = new Map();
+    for (const p of tr.history) for (const x of p.errors) {
+      const w = where.get(x.step) || { n: 0, played: new Map() };
+      w.n++; w.played.set(x.played, (w.played.get(x.played) || 0) + 1);
+      where.set(x.step, w);
+    }
+    const top = [...where].sort((p, q) => q[1].n - p[1].n).slice(0, 6).map(([i, w]) => {
+      const stp = steps[i], sg = segs[stp.seg];
+      const need = [...stp.pitches].sort((p, q) => p - q).map(nameOf).join(' ');
+      const got = [...w.played].map(([m, c]) => nameOf(m) + (c > 1 ? ` ×${c}` : '')).join(', ');
+      return `<li><b>Блок ${sg.n}, шаг ${stp.local + 1}</b> — ${w.n} ${plural(w.n, 'раз', 'раза', 'раз')} · нужно ${need} · нажимал ${got}</li>`;
+    }).join('');
+    const passes = tr.history.map((p, i) =>
+      `<span class="${p.clean ? 'ok' : 'bad'}" title="Проход ${i + 1}">${p.clean ? '✓' : p.errors.length}</span>`).join('');
+    const head = tr.goal.kind === 'clean' ? `${tr.goal.n} ${plural(tr.goal.n, 'чистый', 'чистых', 'чистых')} подряд`
+      : `${tr.goal.n} ${plural(tr.goal.n, 'проход', 'прохода', 'проходов')}`;
+    ui.doneBody.innerHTML = `<h2>Готово: ${head}</h2>` +
+      `<p>Проходов ${s.passes} · чистых ${s.clean} · лучшая серия ${s.best}</p>` +
+      `<div class="pl-passes">${passes}</div>` +
+      (top ? `<h3>Где ошибался</h3><ul>${top}</ul>` : '<p class="ok">Ни одной ошибки!</p>');
+    ui.done.hidden = false;
+  }
+  function onNote(midi) {
+    if (closed) return;
+    const p = midi - MIDI_OFFSET, before = tr.step;
+    const r = tr.press(midi);
+    const now = performance.now();
+    if (r.kind === 'idle') { keysDown.set(p, 'L'); request(); return; }
+    if (r.kind === 'wrong') {
+      keysDown.set(p, 'X');
+      fx.flashes = fx.flashes.filter(f => f.until > now);
+      fx.flashes.push({ pitch: p, until: now + 450 });
+      if (!byPitch.has(p)) fx.toast = { text: `Мимо: ${nameOf(midi)}`, rgb: '255,140,140', until: now + 900 };
+      beep('wrong'); markErrors();
+    } else {
+      const ev = before.events.map(i => events[i]).find(e => e.pitch === p);
+      keysDown.set(p, ev?.hand || 'L');
+    }
+    if (r.kind === 'pass' || r.kind === 'done') {
+      st.t = 0;                                           // новый проход — сразу с начала
+      const n = tr.stats.passes;
+      fx.toast = r.clean
+        ? { text: `Проход ${n} — чисто ✓`, rgb: '63,214,139', until: now + 1400 }
+        : { text: `Проход ${n} — ${r.errors.length} ${errText(r.errors.length)}`, rgb: '255,190,90', until: now + 1400 };
+      beep(r.clean ? 'clean' : 'pass');
+      markErrors();
+      if (r.kind === 'done') showDone();
+    }
+    updateCount(); request();
+  }
+  const offMidi = practice ? listenMidi({
+    onNote,
+    onOff: midi => { if (!closed) { keysDown.delete(midi - MIDI_OFFSET); request(); } },
+    onStatus: s => {
+      const text = {
+        ready: `🎹 ${s.names.join(', ')}`,
+        none: 'Пианино не найдено — подключите кабель',
+        asking: 'Разрешите доступ к MIDI в окне браузера…',
+        denied: 'Нет доступа к MIDI — разрешите (значок слева от адреса) и нажмите сюда',
+        unsupported: 'Этот браузер не видит пианино — нужен Chrome на компьютере',
+      }[s.state];
+      ui.midi.textContent = text;
+      ui.midi.className = 'pl-midi ' + (s.state === 'ready' ? 'ok' : 'bad') + (s.state === 'denied' ? ' retry' : '');
+    },
+  }) : null;
+  if (practice) {
+    if (st.signal) ensureAudio();                         // звук разрешается только по жесту — открытие и есть жест
+    on(root, 'pointerdown', () => { if (st.signal) ensureAudio(); });
+    updateCount();
+  }
   let ro = null;
   // размер окна сменился — перерисовать сразу, не дожидаясь кадра
   if (window.ResizeObserver) { ro = new ResizeObserver(() => draw()); ro.observe(canvas); }
   on(window, 'resize', () => draw());
 
-  let closed = false;
   function close() {
     if (closed) return; closed = true;
     st.playing = false;
     if (st.raf) cancelAnimationFrame(st.raf); st.raf = 0;
     stopAll();
+    offMidi?.(); keysDown.clear();
     if (audio) audio.close().catch(() => {});
     ro?.disconnect();
     for (const off of offs) off();

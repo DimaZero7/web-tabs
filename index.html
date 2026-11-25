@@ -11,6 +11,7 @@
     <select id="song" title="Песня"></select>
     <span id="title" class="title"></span>
     <a id="video" class="btn ghost" target="_blank" rel="noopener" hidden>Видео ↗</a>
+    <button id="practice-song" class="btn ghost" title="Тренировка всей песни на пианино: все блоки подряд">🎹 Вся песня</button>
     <span class="grow"></span>
     <span id="status" class="status"></span>
     <button id="sync" class="btn ghost" title="Синхронизировать песню: сохранить свои правки и подтянуть свежую версию">⟳</button>
@@ -36,6 +37,7 @@
         <label>правая <input id="rep-right" type="number" min="0" max="99"></label>
       </div>
       <button id="piano" class="btn big wide">▶ На пианино</button>
+      <button id="practice" class="btn ghost wide" title="Играть на пианино по кабелю: приложение ждёт правильные клавиши">🎹 Тренировка</button>
       <ul id="errors"></ul>
       <div class="row">
         <button id="dup" class="btn ghost">Дублировать</button>
@@ -70,22 +72,46 @@
         </div>
         <div class="pl-transport">
           <button id="pl-start" class="ico" title="В начало"></button>
-          <button id="pl-prev" class="ico" title="Шаг назад (←)"></button>
-          <button id="pl-play" class="ico play" title="Пуск / пауза (пробел)"></button>
-          <button id="pl-next" class="ico" title="Шаг вперёд (→)"></button>
+          <button id="pl-prev" class="ico watch-only" title="Шаг назад (←)"></button>
+          <button id="pl-play" class="ico play watch-only" title="Пуск / пауза (пробел)"></button>
+          <button id="pl-next" class="ico watch-only" title="Шаг вперёд (→)"></button>
         </div>
         <div class="pl-tools">
-          <div id="pl-speed" class="seg" title="Скорость">
+          <div id="pl-speed" class="seg watch-only" title="Скорость">
             <button data-speed="0.5">0.5×</button><button data-speed="1">1×</button>
             <button data-speed="1.5">1.5×</button><button data-speed="2">2×</button>
           </div>
-          <button id="pl-loop" class="ico toggle" title="По кругу"></button>
+          <button id="pl-loop" class="ico toggle watch-only" title="По кругу"></button>
           <button id="pl-sound" class="ico toggle" title="Звук"></button>
           <button id="pl-close" class="ico" title="Закрыть (Esc)"></button>
         </div>
       </div>
+      <div class="pl-row2">
+        <div id="pl-mode" class="seg" title="Режим">
+          <button data-mode="watch">Смотреть</button><button data-mode="practice">Тренировка</button>
+        </div>
+        <label class="pl-range" title="Какие блоки играть: один, несколько подряд или все">Блоки
+          <select id="pl-from"></select>–<select id="pl-to"></select></label>
+        <div id="pl-practice" class="pl-practice" hidden>
+          <label title="Сколько нужно пройти">Цель <input id="pl-goal" type="number" min="1" max="999"></label>
+          <select id="pl-goal-kind" title="Что считать">
+            <option value="clean">чистых подряд</option><option value="passes">проходов</option>
+          </select>
+          <span id="pl-count" class="pl-count"></span>
+          <span class="grow"></span>
+          <span id="pl-midi" class="pl-midi"></span>
+        </div>
+      </div>
       <div id="pl-progress" class="pl-progress"></div>
       <canvas id="pl-canvas"></canvas>
+      <div id="pl-done" class="pl-done" hidden>
+        <div class="pl-done-card">
+          <div id="pl-done-body"></div>
+          <div class="row">
+            <button id="pl-again" class="btn big">Ещё раз</button>
+          </div>
+        </div>
+      </div>
     </section>
 
     <div id="zoom" class="zoom">
