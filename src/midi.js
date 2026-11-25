@@ -78,6 +78,7 @@ async function ask() {
 export function retryMidi() { if (!access && !asking) asking = ask(); }
 
 export function listenMidi(sub) {
+  if (window.WebTabsAndroid?.startPiano) return listenTablet(sub);
   subs.add(sub);
   if (access) bind();                      // входы могли быть закрыты — открыть снова
   else if (!asking) asking = ask();
@@ -85,7 +86,42 @@ export function listenMidi(sub) {
   return () => { subs.delete(sub); if (!subs.size) unbind(); };
 }
 
-/** Есть ли смысл показывать тренировку: в Android-приложении MIDI пока нет */
-export const midiAvailable = () => !!navigator.requestMIDIAccess && !window.WebTabsAndroid;
+let sessionNumber = 0;
+function listenTablet(sub) {
+  let session = '';
+  subs.add(sub);
+  function stop() {
+    session = '';
+    window.WebTabsAndroid.stopPianoInput();
+    releaseAll();
+  }
+  function connect() {
+    if (document.hidden) { stop(); return; }
+    session = String(++sessionNumber);
+    window.__wtRemoteMidi = (id, kind, key, detail) => {
+      if (id !== session) return;
+      if (kind === 'on') noteOn(key, Number(detail));
+      else if (kind === 'off') noteOff(key);
+      else if (kind === 'reset') releaseAll();
+      else {
+        if (kind !== 'ready') releaseAll();
+        sub.onStatus?.({ state: kind === 'ready' ? 'ready' : 'remote', names: [], detail });
+      }
+    };
+    sub.onStatus?.({ state: 'remote', names: [], detail: 'Подключаю пианино по Wi-Fi…' });
+    window.WebTabsAndroid.startPiano(session);
+  }
+  connect();
+  document.addEventListener('visibilitychange', connect);
+  return () => {
+    document.removeEventListener('visibilitychange', connect);
+    stop();
+    subs.delete(sub);
+    delete window.__wtRemoteMidi;
+  };
+}
+
+export const midiAvailable = () => window.WebTabsAndroid
+  ? !!window.WebTabsAndroid.startPiano : !!navigator.requestMIDIAccess;
 
 window.__wtMidi = { on: (n, v = 64) => noteOn(n, v), off: n => noteOff(n) };

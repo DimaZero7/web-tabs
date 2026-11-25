@@ -683,7 +683,7 @@ export function openPlayer({ song, getSong, block, from, to, measure, mode = 'wa
     onNote,
     onOff: midi => { if (!closed) { keysDown.delete(midi - MIDI_OFFSET); request(); } },
     onStatus: s => {
-      const text = {
+      const text = s.detail || {
         ready: `🎹 ${s.names.join(', ')}`,
         none: 'Пианино не найдено — подключите кабель',
         asking: 'Разрешите доступ к MIDI в окне браузера…',

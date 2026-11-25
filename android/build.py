@@ -21,8 +21,8 @@ BT = os.path.join(SDK, 'build-tools', '35.0.0')
 ANDROID_JAR = os.path.join(SDK, 'platforms', 'android-35', 'android.jar')
 OUT = os.path.join(tempfile.gettempdir(), 'web-tabs-build')   # латинский путь: aapt2 не понимает кириллицу
 DIST = os.path.join(HERE, 'build')
-VERSION_NAME = '0.5.1'
-VERSION_CODE = '6'
+VERSION_NAME = '0.6.0'
+VERSION_CODE = '7'
 
 
 def tool(name):

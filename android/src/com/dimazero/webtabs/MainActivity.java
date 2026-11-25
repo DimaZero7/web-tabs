@@ -40,6 +40,7 @@ public class MainActivity extends Activity {
     private static final int REQ_OPEN = 1, REQ_CREATE = 2, REQ_TREE = 3;
 
     private WebView web;
+    private PianoReceiver piano;
     private SharedPreferences prefs;
     private String pendingReq;                         // номер запроса JS, ждущего выбора файла
 
@@ -64,9 +65,20 @@ public class MainActivity extends Activity {
         // Файлы приложения отдаём с «https://webtabs.app/…» из assets/www — так работают ES-модули
         web.setWebViewClient(new WebViewClient() {
             @Override
+            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                Uri uri = request.getUrl();
+                if (uri.toString().startsWith(ORIGIN)) return false;
+                if (request.isForMainFrame() && "https".equals(uri.getScheme())) {
+                    try { startActivity(new Intent(Intent.ACTION_VIEW, uri)); }
+                    catch (android.content.ActivityNotFoundException ignored) { }
+                }
+                return true;
+            }
+            @Override
             public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest req) {
                 Uri u = req.getUrl();
-                if (!"webtabs.app".equals(u.getHost())) return null;
+                if (!u.toString().startsWith(ORIGIN))
+                    return new WebResourceResponse("text/plain", "utf-8", 403, "Forbidden", null, null);
                 String path = u.getPath() == null || u.getPath().equals("/") ? "/index.html" : u.getPath();
                 try {
                     return new WebResourceResponse(mime(path), "utf-8", getAssets().open("www" + path));
@@ -125,6 +137,17 @@ public class MainActivity extends Activity {
         if (path.endsWith(".png")) return "image/png";
         if (path.endsWith(".svg")) return "image/svg+xml";
         return "application/octet-stream";
+    }
+
+    private void stopPiano() {
+        if (piano != null) piano.close();
+        piano = null;
+    }
+
+    @Override
+    protected void onDestroy() {
+        stopPiano();
+        super.onDestroy();
     }
 
     @Override
@@ -292,6 +315,27 @@ public class MainActivity extends Activity {
 
     /** Методы, доступные из JS как window.WebTabsAndroid.* */
     private class Bridge {
+        @JavascriptInterface
+        public void startPiano(String session) {
+            runOnUiThread(() -> {
+                if (isDestroyed() || isFinishing()) return;
+                stopPiano();
+                String pin = prefs.getString("pianoPin", null);
+                if (pin == null) {
+                    pin = String.format(java.util.Locale.ROOT, "%06d", new java.security.SecureRandom().nextInt(1000000));
+                    prefs.edit().putString("pianoPin", pin).apply();
+                }
+                piano = new PianoReceiver(MainActivity.this, pin, (event, value, detail) -> {
+                    String js = "window.__wtRemoteMidi?.(" + JSONObject.quote(session) + "," +
+                            JSONObject.quote(event) + "," + value + "," + JSONObject.quote(detail) + ")";
+                    runOnUiThread(() -> { if (!isDestroyed()) web.evaluateJavascript(js, null); });
+                });
+                piano.start();
+            });
+        }
+
+        @JavascriptInterface
+        public void stopPianoInput() { runOnUiThread(() -> stopPiano()); }
         @JavascriptInterface
         public String list() {
             try {
