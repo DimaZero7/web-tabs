@@ -12,6 +12,7 @@
     <span id="title" class="title"></span>
     <a id="video" class="btn ghost" target="_blank" rel="noopener" hidden>Видео ↗</a>
     <button id="practice-song" class="btn ghost" title="Тренировка всей песни на пианино: все блоки подряд">🎹 Вся песня</button>
+    <button class="btn ghost piano-link" data-piano-link hidden>Подключение</button>
     <span class="grow"></span>
     <span id="status" class="status"></span>
     <button id="sync" class="btn ghost" title="Синхронизировать песню: сохранить свои правки и подтянуть свежую версию">⟳</button>
@@ -20,6 +21,22 @@
     <button id="add" class="btn">+ Блок</button>
     <button id="png" class="btn ghost" title="Сохранить выделенный блок картинкой (для MyScript)">PNG</button>
   </header>
+  <dialog id="piano-dialog" aria-labelledby="piano-heading">
+    <form id="piano-settings">
+      <header><h2 id="piano-heading">Подключение пианино</h2>
+        <button type="button" class="btn ghost" id="piano-close" aria-label="Закрыть">×</button></header>
+      <div id="piano-fields" hidden>
+        <label>IP планшета<input name="host" placeholder="192.168.1.124" autocomplete="off"></label>
+        <label>Запасной IP<input name="alternate" placeholder="Необязательно" autocomplete="off"></label>
+        <label>Код с планшета<input name="pin" type="password" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="off"></label>
+        <label>Вход MIDI<select name="port" required></select></label>
+        <label class="piano-usb"><input name="usb" type="checkbox"> По USB</label>
+      </div>
+      <p id="piano-state" role="status"></p>
+      <p id="piano-error" role="alert" hidden></p>
+      <button type="submit" id="piano-apply" class="btn" hidden>Подключить</button>
+    </form>
+  </dialog>
 
   <main>
     <canvas id="board"></canvas>
@@ -77,6 +94,7 @@
           <button id="pl-next" class="ico watch-only" title="Шаг вперёд (→)"></button>
         </div>
         <div class="pl-tools">
+          <button class="btn ghost piano-link" data-piano-link hidden>Подключение</button>
           <div id="pl-speed" class="seg watch-only" title="Скорость">
             <button data-speed="0.5">0.5×</button><button data-speed="1">1×</button>
             <button data-speed="1.5">1.5×</button><button data-speed="2">2×</button>

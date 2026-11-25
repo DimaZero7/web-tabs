@@ -531,6 +531,7 @@ export function openPlayer({ song, getSong, block, from, to, measure, mode = 'wa
 
   // ---------- управление ----------
   on(window, 'keydown', e => {
+    if (document.getElementById('piano-dialog').open) return;
     e.stopImmediatePropagation();                         // доска под проигрывателем клавиш не получает
     if (e.key === 'Escape') { e.preventDefault(); close(); }
     else if (practice) {
@@ -543,7 +544,7 @@ export function openPlayer({ song, getSong, block, from, to, measure, mode = 'wa
     else if (e.key === 'Home') { e.preventDefault(); st.t = 0; pause(); }
   }, true);
   // пробел не должен ещё раз «нажать» кнопку в фокусе
-  on(window, 'keyup', e => { if (e.key === ' ') { e.preventDefault(); e.stopImmediatePropagation(); } }, true);
+  on(window, 'keyup', e => { if (e.key === ' ' && !document.getElementById('piano-dialog').open) { e.preventDefault(); e.stopImmediatePropagation(); } }, true);
   // кнопки не забирают фокус по клику мышью
   on(root, 'mousedown', e => { if (e.target.closest('button')) e.preventDefault(); });
 

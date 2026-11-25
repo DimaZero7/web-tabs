@@ -1,30 +1,17 @@
 """Send a Windows MIDI input to web-tabs over the home network."""
-import ctypes
-import ipaddress
 import json
 import os
-import queue
 import shutil
 import socket
 import subprocess
 import threading
 import time
-import tkinter as tk
+import sys
+import urllib.request
+import webbrowser
 from pathlib import Path
-from tkinter import ttk
 
 import rtmidi
-
-CONFIG = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "web-tabs" / "piano.json"
-TITLE = "web-tabs · Пианино на планшете"
-
-
-def read_settings():
-    try:
-        return json.loads(CONFIG.read_text(encoding="utf-8-sig"))
-    except (OSError, ValueError):
-        return {}
-
 
 def handshake(sock, pin):
     sock.sendall(f"WTM1:{pin}\n".encode("ascii"))
@@ -58,16 +45,16 @@ def forward(sock, port_name, stop, report):
                     if midi.is_port_open():
                         midi.close_port()
                     sock.sendall(bytes((0, 0, 0)))
-                    report(f"Планшет подключён. Жду вход {port_name}.")
+                    report("waiting-midi", f"Планшет подключён. Жду вход {port_name}.")
                 elif not midi.is_port_open():
                     try:
                         midi.open_port(ports.index(port_name))
                     except rtmidi.RtMidiError:
                         sock.sendall(bytes((0, 0, 0)))
-                        report("Вход MIDI занят. Закройте другую тренировку на ПК.")
+                        report("waiting-midi", "Вход MIDI занят. Закройте другую тренировку на ПК.")
                     else:
                         sock.sendall(bytes((1, 0, 0)))
-                        report(f"{port_name} → планшет. Можно играть.")
+                        report("ready", f"{port_name} → планшет. Можно играть.")
                 else:
                     sock.sendall(bytes((2, 0, 0)))
                 next_check = now + 1
@@ -105,7 +92,7 @@ def relay(addresses, pin, port_name, stop, report):
         with socket.create_connection((host, port), timeout=1.5) as sock:
             sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
             handshake(sock, pin)
-            forward(sock, port_name, stop, lambda text: report(f"{route} · {text}"))
+            forward(sock, port_name, stop, lambda state, text: report(state, f"{route} · {text}"))
 
     while not stop.is_set():
         try:
@@ -126,96 +113,67 @@ def relay(addresses, pin, port_name, stop, report):
                     finally:
                         release()
             if not stop.is_set():
-                report("Жду тренировку на планшете…")
+                report("waiting", "Жду тренировку на планшете…")
         except ValueError as error:
-            report(str(error))
+            report("error", str(error))
         except (OSError, subprocess.TimeoutExpired):
-            report("Жду тренировку на планшете…")
+            report("waiting", "Жду тренировку на планшете…")
         except rtmidi.RtMidiError as error:
-            report(f"Ошибка MIDI: {error}")
+            report("error", f"Ошибка MIDI: {error}")
         stop.wait(1)
 
 
-def main():
-    # Opening the desktop shortcut twice should bring the existing sender forward.
-    mutex = ctypes.windll.kernel32.CreateMutexW(None, False, "Local\\WebTabsPianoSender")
-    if ctypes.windll.kernel32.GetLastError() == 183:
-        handle = ctypes.windll.user32.FindWindowW(None, TITLE)
-        if handle:
-            ctypes.windll.user32.ShowWindow(handle, 9)
-            ctypes.windll.user32.SetForegroundWindow(handle)
-        return
-
-    root = tk.Tk()
-    root.title(TITLE)
-    panel = ttk.Frame(root, padding=16)
-    panel.pack(fill="both", expand=True)
-    settings = read_settings()
-    host = tk.StringVar(value=settings.get("host", ""))
-    alternate = tk.StringVar(value=settings.get("alternate", ""))
-    usb_only = tk.BooleanVar(value=settings.get("usb", False))
-    pin = tk.StringVar(value=settings.get("pin", ""))
-    port = tk.StringVar(value=settings.get("port", ""))
-    status = tk.StringVar(value="Откройте тренировку на планшете. Там появятся адрес и код.")
-    for row, (label, field) in enumerate([("IP планшета", host), ("Запасной IP", alternate), ("Код с планшета", pin)]):
-        ttk.Label(panel, text=label).grid(row=row, column=0, sticky="w", pady=3)
-        ttk.Entry(panel, textvariable=field).grid(row=row, column=1, sticky="ew", padx=8)
-    ttk.Label(panel, text="Вход MIDI").grid(row=3, column=0, sticky="w")
-    ports = ttk.Combobox(panel, textvariable=port, state="readonly", width=30)
-    ports.grid(row=3, column=1, padx=8, sticky="ew")
-
-    def refresh():
-        names = rtmidi.MidiIn().get_ports()
-        ports["values"] = names
-        if not port.get() and names:
-            port.set(next((n for n in names if "piano" in n.lower()), names[0]))
-
-    ports.configure(postcommand=refresh)
-    refresh()
-    panel.columnconfigure(1, weight=1)
-    ttk.Label(panel, textvariable=status, wraplength=390).grid(row=4, columnspan=2, sticky="w", pady=10)
-    stop = threading.Event()
-    messages = queue.SimpleQueue()
+def serve():
     worker = None
+    stop = threading.Event()
 
-    def connect():
-        nonlocal stop, worker, messages
+    def report(state, text):
+        print(json.dumps({"state": state, "message": text}), flush=True)
+
+    try:
+        for line in sys.stdin:
+            settings = json.loads(line)
+            if worker:
+                stop.set()
+                worker.join()
+            if not settings:
+                break
+            addresses = [] if settings["usb"] else [
+                addr for addr in (settings["host"], settings["alternate"]) if addr]
+            stop = threading.Event()
+            report("waiting", "Жду тренировку на планшете…")
+            worker = threading.Thread(target=relay, args=(addresses, settings["pin"], settings["port"], stop, report))
+            worker.start()
+    finally:
+        stop.set()
+        if worker:
+            worker.join()
+
+
+def open_app():
+    # Existing Windows shortcuts point to this file. Start one local server and open its UI.
+    root = Path(__file__).resolve().parents[1]
+    url = "http://127.0.0.1:" + os.environ.get("PORT", "5178")
+    process = None
+    for _ in range(30):
         try:
-            addresses = [] if usb_only.get() else [
-                str(ipaddress.IPv4Address(v.get().strip())) for v in (host, alternate) if v.get().strip()]
-            if not addresses and not usb_only.get():
-                raise ValueError()
-            code = pin.get().strip()
-            if len(code) != 6 or not code.isascii() or not code.isdigit() or not port.get():
-                raise ValueError()
-        except ValueError:
-            status.set("Укажите IPv4-адрес, шестизначный код и вход MIDI.")
-            return
-        if worker and worker.is_alive():
-            stop.set()
-        CONFIG.parent.mkdir(parents=True, exist_ok=True)
-        CONFIG.write_text(json.dumps(dict(host=host.get().strip(), alternate=alternate.get().strip(),
-                                         pin=code, port=port.get(), usb=usb_only.get())), encoding="utf-8")
-        stop = threading.Event()
-        messages = queue.SimpleQueue()
-        status.set("Подключение…")
-        worker = threading.Thread(target=relay, args=(addresses, code, port.get(), stop, messages.put), daemon=True)
-        worker.start()
-
-    def poll():
-        while not messages.empty():
-            status.set(messages.get())
-        root.after(150, poll)
-
-    ttk.Checkbutton(panel, text="По USB", variable=usb_only).grid(row=5, column=0, sticky="w")
-    ttk.Button(panel, text="Подключить", command=connect).grid(row=5, column=1, sticky="e", padx=8)
-    if settings:
-        connect()
-    poll()
-    root.mainloop()
-    stop.set()
-    ctypes.windll.kernel32.CloseHandle(mutex)
+            with urllib.request.urlopen(url + "/api/piano", timeout=0.5) as res:
+                if "supported" in json.load(res):
+                    webbrowser.open(url)
+                    return
+        except (OSError, ValueError):
+            pass
+        if process is None:
+            process = subprocess.Popen(["node", str(root / "serve.mjs")], cwd=root,
+                                       creationflags=subprocess.CREATE_NO_WINDOW)
+        time.sleep(0.15)
+    webbrowser.open(url)
 
 
 if __name__ == "__main__":
-    main()
+    if sys.argv[1:] == ["--serve"]:
+        serve()
+    elif sys.argv[1:] == ["--ports"]:
+        print(json.dumps(rtmidi.MidiIn().get_ports()))
+    else:
+        open_app()

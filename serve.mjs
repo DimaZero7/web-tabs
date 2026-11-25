@@ -5,6 +5,7 @@ import { createServer } from 'node:http';
 import { readFile, writeFile, readdir, stat } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { autoConnect, configure, midiPorts, pianoStatus } from './pc/piano.mjs';
 
 const ROOT = fileURLToPath(new URL('.', import.meta.url));
 const SONGS = join(ROOT, 'songs');
@@ -30,6 +31,25 @@ createServer(async (req, res) => {
   try {
     const url = new URL(req.url, 'http://localhost');
     const parts = url.pathname.split('/').filter(Boolean).map(decodeURIComponent);
+
+    if (url.pathname === '/api/piano' || url.pathname === '/api/piano/ports') {
+      const host = req.headers.host;
+      if (!['localhost', '127.0.0.1'].some(name => host === name + ':' + PORT) ||
+          (req.headers.origin && req.headers.origin !== 'http://' + host)) {
+        return send(res, 403, { error: 'Доступ только из локального приложения.' });
+      }
+      if (req.method === 'GET' && url.pathname === '/api/piano') return send(res, 200, pianoStatus());
+      if (!pianoStatus().supported) return send(res, 400, { error: 'Передатчик работает в Windows.' });
+      if (req.method === 'GET') {
+        try { return send(res, 200, await midiPorts()); }
+        catch { return send(res, 503, { error: 'Не удалось прочитать MIDI-входы. Проверьте Python и python-rtmidi.' }); }
+      }
+      if (req.method !== 'POST' || url.pathname !== '/api/piano') return send(res, 405, { error: 'Метод не поддерживается.' });
+      if (req.headers['content-type'] !== 'application/json') return send(res, 415, { error: 'Требуется JSON.' });
+      try { configure(JSON.parse(await readBody(req))); }
+      catch (e) { return send(res, 400, { error: e.message }); }
+      return send(res, 200, pianoStatus());
+    }
 
     // API песен
     if (parts[0] === 'api' && parts[1] === 'songs' && parts.length === 2) {
@@ -64,4 +84,7 @@ createServer(async (req, res) => {
   } catch (e) {
     send(res, e.code === 'ENOENT' ? 404 : 500, { error: e.message });
   }
-}).listen(PORT, '127.0.0.1', () => console.log(`web-tabs: http://localhost:${PORT}`));
+}).listen(PORT, '127.0.0.1', () => {
+  autoConnect();
+  console.log(`web-tabs: http://localhost:${PORT}`);
+});

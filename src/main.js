@@ -4,6 +4,7 @@ import { drawGrid, drawItems, makeMeasure } from './draw.js';
 import { storage, emptySong } from './storage.js';
 import { openPlayer } from './player.js';
 import { midiAvailable } from './midi.js';
+import './connection.js';
 
 const CELL_100 = 5 * 96 / 25.4;        // клетка 5 мм в CSS-пикселях = масштаб 100%
 const Z_MIN = CELL_100 * 0.25, Z_MAX = CELL_100 * 10;
